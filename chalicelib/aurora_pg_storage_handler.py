@@ -216,6 +216,9 @@ class AuroraPostgresStorageHandler:
 
         return output
 
+    def _create_update_statement(self, table_ref: str, pk_name: str, input: dict, item_id: str) -> str:
+        return f'update {table_ref} set {",".join(self._synthesize_update(input))} where {pk_name} = "{item_id}"'
+
     def _synthesize_insert(self, input: dict) -> tuple:
         '''Generate a valid list of insert clauses from an input dict. For example:
 

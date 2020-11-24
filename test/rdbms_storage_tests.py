@@ -72,6 +72,11 @@ class RdbmsStorageTests(unittest.TestCase):
         self.assertEqual(updates[2], 'c = 0')
         self.assertEqual(updates[3], 'd = 1')
 
+        update_statement = self._storage_handler._create_update_statement(table_ref='my_table', pk_name="id",
+                                                                          input=input, item_id="123")
+
+        self.assertEqual(update_statement, 'update my_table set a = "12345",b = 999,c = 0,d = 1 where id = "123"')
+
     def test_insert_clause(self):
         input = {
             "a": "12345",
