@@ -187,6 +187,31 @@ class AuroraPostgresStorageHandler:
                 if index_exists[0] == () or index_exists[0] is None:
                     self._create_index(table_ref, i)
 
+    def _synthesize_update(self, input: dict) -> list:
+        ''' Generate a valid list of update clauses from an input dict. For example:
+
+        {"a":1, "b":2} becomes ["a = 1", "b=2"]
+
+        :param input:
+        :return:
+        '''
+        output = []
+        for k in input.keys():
+            target = input.get(k)
+            if type(target) == str:
+                set_val = f'"{target}"'
+            elif type(target) == bool:
+                if target is True:
+                    set_val = 1
+                else:
+                    set_val = 0
+            else:
+                set_val = target
+
+            output.append(f"{k} = {set_val}")
+
+        return output
+
     def __init__(self, table_name, primary_key_attribute, region, delete_mode, allow_runtime_delete_mode_change,
                  table_indexes, metadata_indexes, crawler_rolename,
                  catalog_database, allow_non_itemmaster_writes, strict_occv, gremlin_address, deployed_account,

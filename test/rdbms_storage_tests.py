@@ -12,6 +12,7 @@ from aurora_pg_storage_handler import AuroraPostgresStorageHandler
 import warnings
 import json
 
+
 class RdbmsStorageTests(unittest.TestCase):
     _cluster_address = os.environ[params.CLUSTER_ADDRESS]
     _cluster_port = 5432
@@ -55,9 +56,26 @@ class RdbmsStorageTests(unittest.TestCase):
     def tearDownClass(cls) -> None:
         cls._storage_handler.disconnect()
 
+    def test_update_clause(self):
+        input = {
+            "a": "12345",
+            "b": 999,
+            "c": False,
+            "d": True
+        }
+
+        updates = self._storage_handler._synthesize_update(input)
+
+        self.assertEqual(4, len(updates))
+        self.assertEqual(updates[0], 'a = "12345"')
+        self.assertEqual(updates[1], 'b = 999')
+        self.assertEqual(updates[2], 'c = 0')
+        self.assertEqual(updates[3], 'd = 1')
+
     def test_check(self):
         found = self._storage_handler.check("xyz")
         self.assertFalse(found)
+
 
 if __name__ == '__main__':
     unittest.main()
