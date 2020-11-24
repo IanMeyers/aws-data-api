@@ -52,12 +52,15 @@ class AuroraPostgresStorageHandler:
             return sql
 
     def _run_commands(self, commands: list) -> list:
+        '''Function to run one or more commands that will return at most one record. For statements that return
+        multiple records, use underlying cursor directly.
+        '''
         cursor = self._db_conn.cursor()
         output = []
 
         def _add_output():
             try:
-                output.append(cursor.fetchall)
+                output.append(cursor.fetchall()[0])
             except ProgrammingError:
                 if e['M'] == 'no result set':
                     output.append(None)
@@ -200,7 +203,7 @@ class AuroraPostgresStorageHandler:
 
         # setup foundation properties
         self._region = region
-        self._resource_table_name = table_name
+        self._resource_table_name = table_name.lower()
         self._metadata_table_name = f"{table_name}_{params.METADATA}"
         self._pk_name = primary_key_attribute
         self._deployed_account = deployed_account
@@ -243,8 +246,15 @@ class AuroraPostgresStorageHandler:
             self._verify_table(self._metadata_table_name, self._metadata_schema)
             self._verify_indexes(self._metadata_table_name, metadata_indexes)
 
-    def check(self, id: str):
-        pass
+    def check(self, id: str) -> bool:
+        statement = f"select count(9) from {self._resource_table_name} where {self._pk_name} = '{id}'"
+
+        found = self._run_commands([statement])[0]
+
+        if found is not None and found != () and found[0] != 0:
+            return True
+        else:
+            return False
 
     def list_items(self, **kwargs):
         pass
@@ -265,6 +275,14 @@ class AuroraPostgresStorageHandler:
         pass
 
     def update_item(self, id: str, caller_identity: str, **kwargs):
+        ''' Method ot merge an item into the table. We will first attempt to update an existing item, and when that
+        fails we will insert a new item
+
+        :param id:
+        :param caller_identity:
+        :param kwargs:
+        :return:
+        '''
         pass
 
     def drop_table(self, table_name: str, do_export: bool):

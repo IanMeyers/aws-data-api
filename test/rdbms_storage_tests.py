@@ -55,9 +55,9 @@ class RdbmsStorageTests(unittest.TestCase):
     def tearDownClass(cls) -> None:
         cls._storage_handler.disconnect()
 
-    def test_setup(self):
-        self.assertIsNotNone(self._storage_handler)
-
+    def test_check(self):
+        found = self._storage_handler.check("xyz")
+        self.assertFalse(found)
 
 if __name__ == '__main__':
     unittest.main()
