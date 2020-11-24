@@ -32,9 +32,13 @@ class RdbmsStorageTests(unittest.TestCase):
             resource_schema = json.load(f)
         with open(f"test_metadata_schema.json", 'r') as f:
             metadata_schema = json.load(f)
-        # load the chalice config for extended configuration
-        with open("../.chalice/config.json", 'r') as f:
-            extended_config = json.load(f).get("stages").get('dev')
+        # create a simple extended configuration that binds to the subnets where the database is deployed
+        extended_config = {
+            "subnet_ids": ["subnet-dbcc31be",
+                           "subnet-0dfe3d65",
+                           "subnet-32af6f45"],
+            "security_group_ids": ["sg-26ec6a5e"]
+        }
 
         other_args = {
             params.CLUSTER_ADDRESS: cls._cluster_address,
@@ -134,6 +138,21 @@ class RdbmsStorageTests(unittest.TestCase):
         # check that the item exists
         item = self._storage_handler.check(id=self._item_id)
         self.assertTrue(item)
+
+    def test_get_item(self):
+        v1 = '12345'
+        v2 = 'abc'
+        item = {
+            "attr1": v1,
+            "attr2": v2
+        }
+        update_response = self._storage_handler.update_item(id=self._item_id, caller_identity='bob', **item)
+        self.assertTrue(update_response)
+
+        # get the item back
+        item = self._storage_handler.get(id=self._item_id)
+
+        self.assertEqual(item.get("attr1"), v1)
 
 
 if __name__ == '__main__':

@@ -13,7 +13,7 @@ import chalicelib.parameters as params
 
 _sts_client = None
 _iam_client = None
-import chalicelib.exceptions
+import chalicelib.exceptions as exceptions
 
 
 def setup_logging(set_name: str = None):
@@ -426,6 +426,50 @@ def verify_crawler(table_name, crawler_rolename, catalog_db, datasource_type: st
             except glue_client.exceptions.AccessDeniedException as ade:
                 print(ade)
                 raise ade
+
+
+def pivot_resultset_into_json(rows: list, column_spec: list) -> list:
+    output = []
+
+    for r in rows:
+        obj = {}
+        for i, c in enumerate(column_spec):
+            obj[c] = r[i]
+        output.append(obj)
+
+    return output
+
+
+def json_to_pg(p_name: str, p_spec: dict, p_required: dict, pk_name: str) -> str:
+    '''Convert a JSON type to a Postgres type with nullability spec
+    '''
+    base = None
+    if p_spec is not None:
+        p_type = p_spec.get("type")
+
+        if p_type.lower() == 'string':
+            base = 'varchar'
+        elif p_type.lower() == 'number':
+            base = 'double precision'
+        elif p_type.lower() == 'integer':
+            base = 'integer'
+        elif p_type.lower() == 'boolean':
+            base = 'char(1) NOT NULL DEFAULT 0'
+            return base
+        else:
+            raise exceptions.UnimplementedFeatureException(f"Type {p_type} not translatable to RDBMS types")
+
+        # process null/not null
+        if p_name.lower() == pk_name:
+            base += ' NOT NULL PRIMARY KEY'
+        elif p_name in p_required:
+            base += ' NOT NULL'
+        else:
+            base += ' NULL'
+
+        return base
+    else:
+        raise exceptions.DetailedException("Unable to render None Type Spec")
 
 
 def run_glue_export(table_name, s3_export_path, kms_key_arn, read_pct, log_path, export_role, dpu):

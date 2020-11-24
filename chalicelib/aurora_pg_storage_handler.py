@@ -85,6 +85,8 @@ class DataAPIStorageHandler:
                     else:
                         cursor.execute(c)
                         _add_output()
+                except pg8000.exceptions.IntegrityError as ie:
+                    pass
                 except Exception as e:
                     # cowardly bail on errors
                     self._db_conn.rollback()
@@ -116,45 +118,13 @@ class DataAPIStorageHandler:
 
         return conn
 
-    def _extract_type_spec(self, p_name: str, p_spec: dict) -> str:
-        '''Convert a JSON type to a Postgres type with nullability spec
-        '''
-        base = None
-        if p_spec is not None:
-            p_type = p_spec.get("type")
-
-            if p_type.lower() == 'string':
-                base = 'varchar'
-            elif p_type.lower() == 'number':
-                base = 'double precision'
-            elif p_type.lower() == 'integer':
-                base = 'integer'
-            elif p_type.lower() == 'boolean':
-                base = 'char(1) NOT NULL DEFAULT 0'
-                return base
-            else:
-                raise exceptions.UnimplementedFeatureException(f"Type {p_type} not translatable to RDBMS types")
-
-            # process null/not null
-            req = self._resource_schema.get('required')
-
-            if p_name.lower() == self._pk_name:
-                base += ' NOT NULL PRIMARY KEY'
-            elif p_name in req:
-                base += ' NOT NULL'
-            else:
-                base += ' NULL'
-
-            return base
-        else:
-            raise exceptions.DetailedException("Unable to render None Type Spec")
-
     def _create_table_from_schema(self, table_ref: str, table_schema: dict) -> bool:
         column_spec = []
         prop = table_schema.get('properties')
 
         for p in prop.keys():
-            column_spec.append(f"{p} {self._extract_type_spec(p, prop.get(p))}")
+            column_spec.append(
+                f"{p} {utils.json_to_pg(p_name=p, p_spec=prop.get(p), p_required=self._resource_schema.get('required'), pk_name=self._pk_name)}")
 
         # synthesize the create table statement
         statement = f"create table if not exists {table_ref}({','.join(column_spec)})"
@@ -251,6 +221,13 @@ class DataAPIStorageHandler:
         updates = ",".join(self._synthesize_update(input))
         return f"update {table_ref} set {updates} where {pk_name} = '{item_id}'"
 
+    def _generate_keylist_for_obj(self, schema, pk_name):
+        keys = [pk_name]
+        for k in schema.keys():
+            keys.append(k)
+
+        return keys
+
     def _synthesize_insert(self, pk_name: str, pk_value: str, input: dict) -> tuple:
         '''Generate a valid list of insert clauses from an input dict. For example:
 
@@ -259,10 +236,9 @@ class DataAPIStorageHandler:
         :param input:
         :return:
         '''
-        columns = [pk_name]
+        columns = self._generate_keylist_for_obj(schema=input, pk_name=pk_name)
         values = [self._extract_type(pk_value)]
         for k in input.keys():
-            columns.append(k)
             values.append(self._extract_type(input.get(k)))
 
         return columns, values
@@ -355,7 +331,11 @@ class DataAPIStorageHandler:
         pass
 
     def get(self, id: str):
-        pass
+        columns = list(self._resource_schema.get("properties").keys())
+        statement = f"select {','.join(columns)} from {self._resource_table_name} where {self._pk_name} = '{id}'"
+        output = self._run_commands([statement])
+
+        return utils.pivot_resultset_into_json(output, columns)
 
     def get_metadata(self, id: str):
         pass
@@ -386,7 +366,7 @@ class DataAPIStorageHandler:
 
             output = self._run_commands([insert])
 
-            if output[0] is None:
+            if len(output) == 0 or output[0] is None:
                 return True
             else:
                 raise exceptions.DetailedException("Unable to insert or update Resource")
