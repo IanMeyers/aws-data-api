@@ -43,7 +43,7 @@ class RdbmsStorageTests(unittest.TestCase):
         cls._storage_handler = AuroraPostgresStorageHandler(table_name="MyItem_dev", primary_key_attribute="id",
                                                             region="eu-west-1",
                                                             delete_mode='HARD', allow_runtime_delete_mode_change=True,
-                                                            table_indexes=None, metadata_indexes=None,
+                                                            table_indexes=["attr2"], metadata_indexes=None,
                                                             crawler_rolename=None,
                                                             catalog_database=None, allow_non_itemmaster_writes=False,
                                                             strict_occv=True,

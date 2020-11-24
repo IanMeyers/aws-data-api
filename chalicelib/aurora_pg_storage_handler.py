@@ -3,11 +3,13 @@ import chalicelib.parameters as params
 import chalicelib.exceptions as exceptions
 import boto3
 import os
+import sys
 import pg8000
 from pg8000.exceptions import ProgrammingError
 import ssl
 import socket
 import traceback
+import json
 
 
 class AuroraPostgresStorageHandler:
@@ -40,10 +42,28 @@ class AuroraPostgresStorageHandler:
     _cluster_db = None
     _db_conn = None
     _ssl = False
+    _sql_helper = None
 
-    def _run_commands(self, commands:list) -> list:
+    def _get_sql(self, name):
+        sql = self._sql_helper.get(name)
+        if sql is None:
+            raise exceptions.InvalidArgumentsException(f"Unable to look up SQL {name}")
+        else:
+            return sql
+
+    def _run_commands(self, commands: list) -> list:
         cursor = self._db_conn.cursor()
         output = []
+
+        def _add_output():
+            try:
+                output.append(cursor.fetchall)
+            except ProgrammingError:
+                if e['M'] == 'no result set':
+                    output.append(None)
+                else:
+                    output.append(e)
+
         for c in commands:
             if c is not None:
                 try:
@@ -53,10 +73,10 @@ class AuroraPostgresStorageHandler:
                         for s in subcommands:
                             if s is not None and s != '':
                                 cursor.execute(s.replace("\n", ""))
-                                output.append(cursor.fetchall())
+                                _add_output()
                     else:
                         cursor.execute(c)
-                        output.append(cursor.fetchall())
+                        _add_output()
                 except Exception as e:
                     # cowardly bail on errors
                     self._db_conn.rollback()
@@ -88,7 +108,7 @@ class AuroraPostgresStorageHandler:
 
         return conn
 
-    def _extract_type_spec(self, p_name, p_spec):
+    def _extract_type_spec(self, p_name: str, p_spec: dict) -> str:
         '''Convert a JSON type to a Postgres type with nullability spec
         '''
         base = None
@@ -121,7 +141,7 @@ class AuroraPostgresStorageHandler:
         else:
             raise exceptions.DetailedException("Unable to render None Type Spec")
 
-    def _create_table_from_schema(self, table_ref: str, table_schema: dict):
+    def _create_table_from_schema(self, table_ref: str, table_schema: dict) -> bool:
         column_spec = []
         prop = table_schema.get('properties')
 
@@ -137,7 +157,7 @@ class AuroraPostgresStorageHandler:
 
         return True
 
-    def _verify_table(self, table_ref: str, table_schema: dict):
+    def _verify_table(self, table_ref: str, table_schema: dict) -> None:
         try:
             cursor = self._db_conn.cursor()
             cursor.execute(f"select count(9) from {table_ref}")
@@ -149,6 +169,21 @@ class AuroraPostgresStorageHandler:
             else:
                 raise exceptions.DetailedException(e.message)
 
+    def _create_index(self, table_ref: str, column_name: str) -> None:
+        statement = f"create index {table_ref}_{column_name} on {table_ref} ({column_name})"
+
+        ok = self._run_commands([statement])
+
+    def _verify_indexes(self, table_ref: str, indexes: list) -> None:
+        if indexes is not None:
+            for i in indexes:
+                sql = self._get_sql("VerifyIndexOnColumn") % (table_ref, i)
+
+                index_exists = self._run_commands([sql])
+
+                if index_exists[0] == () or index_exists[0] is None:
+                    self._create_index(table_ref, i)
+
     def __init__(self, table_name, primary_key_attribute, region, delete_mode, allow_runtime_delete_mode_change,
                  table_indexes, metadata_indexes, crawler_rolename,
                  catalog_database, allow_non_itemmaster_writes, strict_occv, gremlin_address, deployed_account,
@@ -158,6 +193,10 @@ class AuroraPostgresStorageHandler:
 
         global log
         log = self._logger
+
+        # load the sql statement helper
+        with open(os.path.join(os.path.dirname(__file__), 'sql_fragments.json'), 'r') as f:
+            self._sql_helper = json.load(f)
 
         # setup foundation properties
         self._region = region
@@ -200,7 +239,9 @@ class AuroraPostgresStorageHandler:
 
             # verify the table exists
             self._verify_table(self._resource_table_name, self._resource_schema)
+            self._verify_indexes(self._resource_table_name, table_indexes)
             self._verify_table(self._metadata_table_name, self._metadata_schema)
+            self._verify_indexes(self._metadata_table_name, metadata_indexes)
 
     def check(self, id: str):
         pass
