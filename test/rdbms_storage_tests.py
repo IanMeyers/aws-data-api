@@ -10,7 +10,7 @@ sys.path.append("../chalicelib")
 import parameters as params
 from aurora_pg_storage_handler import AuroraPostgresStorageHandler
 import warnings
-
+import json
 
 class RdbmsStorageTests(unittest.TestCase):
     _cluster_address = os.environ[params.CLUSTER_ADDRESS]
@@ -24,13 +24,18 @@ class RdbmsStorageTests(unittest.TestCase):
     def setUpClass(cls) -> None:
         warnings.filterwarnings("ignore", category=ResourceWarning, message="unclosed.*<ssl.SSLSocket.*>")
 
+        # load the test schema
+        with open(f"test_resource_schema.json", 'r') as f:
+            json_schema = json.load(f)
+
         other_args = {
             params.CLUSTER_ADDRESS: cls._cluster_address,
             params.CLUSTER_PORT: cls._cluster_port,
             params.DB_USERNAME: cls._cluster_user,
             params.DB_NAME: cls._cluster_db,
             params.DB_USERNAME_PSTORE_ARN: "DataApiAuroraPassword",
-            params.DB_USE_SSL: False
+            params.DB_USE_SSL: False,
+            params.CONTROL_TYPE_RESOURCE_SCHEMA: json_schema
         }
         cls._storage_handler = AuroraPostgresStorageHandler(table_name="MyItem_dev", primary_key_attribute="id",
                                                             region="eu-west-1",

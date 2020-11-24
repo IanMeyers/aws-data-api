@@ -4,6 +4,7 @@ import chalicelib.exceptions as exceptions
 import boto3
 import os
 import pg8000
+from pg8000.exceptions import ProgrammingError
 import ssl
 import socket
 import traceback
@@ -84,6 +85,64 @@ class AuroraPostgresStorageHandler:
 
         return conn
 
+    def _extract_type_spec(self, p_name, p_spec):
+        '''Convert a JSON type to a Postgres type
+        '''
+        base = None
+        if p_spec is not None:
+            p_type = p_spec.get("type")
+
+            if p_type.lower() == 'string':
+                base = 'varchar'
+            elif p_type.lower() == 'number':
+                base = 'double precision'
+            elif p_type.lower() == 'integer':
+                base = 'integer'
+            elif p_type.lower() == 'boolean':
+                base = 'char(1) NOT NULL DEFAULT 0'
+                return base
+            else:
+                raise exceptions.UnimplementedFeatureException(f"Type {p_type} not translatable to RDBMS types")
+
+            req = self._schema.get('required')
+
+            if p_name.lower() == self._pk_name:
+                base += ' NOT NULL PRIMARY KEY'
+            elif p_name in req:
+                base += ' NOT NULL'
+            else:
+                base += ' NULL'
+
+            return base
+        else:
+            raise exceptions.DetailedException("Unable to render None Type Spec")
+
+    def _create_table_from_schema(self):
+        column_spec = []
+        prop = self._schema.get('properties')
+
+        for p in prop.keys():
+            column_spec.append(f"{p} {self._extract_type_spec(p, prop.get(p))}")
+
+        # synthesize the create table statement
+        statement = f"create table if not exists {self._table_name}({','.join(column_spec)})"
+
+        self._logger.debug(statement)
+
+        self._run_commands([statement])
+
+    def _verify_table(self):
+        try:
+            cursor = self._db_conn.cursor()
+            cursor.execute(f"select count(9) from {self._table_name}")
+            res = cursor.fetchone()
+        except ProgrammingError as e:
+            if "not exist" in str(e):
+                # table doesn't exist so create it based on the current schema
+                self._create_table_from_schema()
+            else:
+                raise exceptions.DetailedException(e.message)
+
     def __init__(self, table_name, primary_key_attribute, region, delete_mode, allow_runtime_delete_mode_change,
                  table_indexes, metadata_indexes, crawler_rolename,
                  catalog_database, allow_non_itemmaster_writes, strict_occv, gremlin_address, deployed_account,
@@ -107,6 +166,11 @@ class AuroraPostgresStorageHandler:
         self._cluster_db = kwargs.get(params.DB_NAME)
         self._cluster_pstore = kwargs.get(params.DB_USERNAME_PSTORE_ARN)
         self._ssl = kwargs.get(params.DB_USE_SSL)
+        self._schema = kwargs.get(params.CONTROL_TYPE_RESOURCE_SCHEMA)
+
+        if self._schema is None:
+            raise exceptions.InvalidArgumentsException(
+                "Relational Storage Handler requires a JSON Schema to initialise")
 
         if self._cluster_pstore is None:
             raise exceptions.InvalidArgumentsException(
@@ -123,6 +187,9 @@ class AuroraPostgresStorageHandler:
 
             # connect to the database
             self._db_conn = self._get_pg_conn(pwd=_pwd)
+
+            # verify the table exists
+            self._verify_table()
 
     def check(self, id: str):
         pass
