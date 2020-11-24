@@ -72,6 +72,31 @@ class RdbmsStorageTests(unittest.TestCase):
         self.assertEqual(updates[2], 'c = 0')
         self.assertEqual(updates[3], 'd = 1')
 
+    def test_insert_clause(self):
+        input = {
+            "a": "12345",
+            "b": 999,
+            "c": False,
+            "d": True
+        }
+
+        inserts = self._storage_handler._synthesize_insert(input)
+
+        columns = inserts[0]
+        values = inserts[1]
+
+        # check column output
+        self.assertEqual(4, len(columns))
+        for i, k in enumerate(input):
+            self.assertEqual(k, columns[i])
+
+        # check value output
+        self.assertEqual(4, len(values))
+        self.assertEqual(values[0], '"12345"')
+        self.assertEqual(values[1], 999)
+        self.assertEqual(values[2], 0)
+        self.assertEqual(values[3], 1)
+
     def test_check(self):
         found = self._storage_handler.check("xyz")
         self.assertFalse(found)
