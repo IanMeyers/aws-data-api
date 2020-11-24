@@ -14,17 +14,16 @@ class AuroraPostgresStorageHandler:
     _region = None
     _glue_client = None
     _sts_client = None
-    _resource_table = None
-    _metadata_table = None
     _control_table = None
-    _table_name = None
+    _resource_table_name = None
+    _metadata_table_name = None
     _pk_name = None
     _delete_mode = None
     _allow_runtime_delete_mode_change = False
     _table_indexes = []
     _meta_indexes = []
     _schema_loaded = False
-    _schema = None
+    _resource_schema = None
     _schema_validator = None
     _schema_validation_refresh_hitcount = None
     _schema_dependent_hit_count = 0
@@ -86,7 +85,7 @@ class AuroraPostgresStorageHandler:
         return conn
 
     def _extract_type_spec(self, p_name, p_spec):
-        '''Convert a JSON type to a Postgres type
+        '''Convert a JSON type to a Postgres type with nullability spec
         '''
         base = None
         if p_spec is not None:
@@ -104,7 +103,8 @@ class AuroraPostgresStorageHandler:
             else:
                 raise exceptions.UnimplementedFeatureException(f"Type {p_type} not translatable to RDBMS types")
 
-            req = self._schema.get('required')
+            # process null/not null
+            req = self._resource_schema.get('required')
 
             if p_name.lower() == self._pk_name:
                 base += ' NOT NULL PRIMARY KEY'
@@ -117,29 +117,31 @@ class AuroraPostgresStorageHandler:
         else:
             raise exceptions.DetailedException("Unable to render None Type Spec")
 
-    def _create_table_from_schema(self):
+    def _create_table_from_schema(self, table_ref: str, table_schema: dict):
         column_spec = []
-        prop = self._schema.get('properties')
+        prop = table_schema.get('properties')
 
         for p in prop.keys():
             column_spec.append(f"{p} {self._extract_type_spec(p, prop.get(p))}")
 
         # synthesize the create table statement
-        statement = f"create table if not exists {self._table_name}({','.join(column_spec)})"
+        statement = f"create table if not exists {table_ref}({','.join(column_spec)})"
 
         self._logger.debug(statement)
 
         self._run_commands([statement])
 
-    def _verify_table(self):
+        return True
+
+    def _verify_table(self, table_ref: str, table_schema: dict):
         try:
             cursor = self._db_conn.cursor()
-            cursor.execute(f"select count(9) from {self._table_name}")
+            cursor.execute(f"select count(9) from {table_ref}")
             res = cursor.fetchone()
         except ProgrammingError as e:
             if "not exist" in str(e):
                 # table doesn't exist so create it based on the current schema
-                self._create_table_from_schema()
+                ok = self._create_table_from_schema(table_ref, table_schema)
             else:
                 raise exceptions.DetailedException(e.message)
 
@@ -155,7 +157,8 @@ class AuroraPostgresStorageHandler:
 
         # setup foundation properties
         self._region = region
-        self._table_name = table_name
+        self._resource_table_name = table_name
+        self._metadata_table_name = f"{table_name}_{params.METADATA}"
         self._pk_name = primary_key_attribute
         self._deployed_account = deployed_account
 
@@ -166,9 +169,12 @@ class AuroraPostgresStorageHandler:
         self._cluster_db = kwargs.get(params.DB_NAME)
         self._cluster_pstore = kwargs.get(params.DB_USERNAME_PSTORE_ARN)
         self._ssl = kwargs.get(params.DB_USE_SSL)
-        self._schema = kwargs.get(params.CONTROL_TYPE_RESOURCE_SCHEMA)
 
-        if self._schema is None:
+        # pick up schemas to push table structure
+        self._resource_schema = kwargs.get(params.CONTROL_TYPE_RESOURCE_SCHEMA)
+        self._metadata_schema = kwargs.get(params.CONTROL_TYPE_METADATA_SCHEMA)
+
+        if self._resource_schema is None:
             raise exceptions.InvalidArgumentsException(
                 "Relational Storage Handler requires a JSON Schema to initialise")
 
@@ -189,7 +195,8 @@ class AuroraPostgresStorageHandler:
             self._db_conn = self._get_pg_conn(pwd=_pwd)
 
             # verify the table exists
-            self._verify_table()
+            self._verify_table(self._resource_table_name, self._resource_schema)
+            self._verify_table(self._metadata_table_name, self._metadata_schema)
 
     def check(self, id: str):
         pass

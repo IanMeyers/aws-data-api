@@ -24,9 +24,11 @@ class RdbmsStorageTests(unittest.TestCase):
     def setUpClass(cls) -> None:
         warnings.filterwarnings("ignore", category=ResourceWarning, message="unclosed.*<ssl.SSLSocket.*>")
 
-        # load the test schema
+        # load the test schemas
         with open(f"test_resource_schema.json", 'r') as f:
-            json_schema = json.load(f)
+            resource_schema = json.load(f)
+        with open(f"test_metadata_schema.json", 'r') as f:
+            metadata_schema = json.load(f)
 
         other_args = {
             params.CLUSTER_ADDRESS: cls._cluster_address,
@@ -35,7 +37,8 @@ class RdbmsStorageTests(unittest.TestCase):
             params.DB_NAME: cls._cluster_db,
             params.DB_USERNAME_PSTORE_ARN: "DataApiAuroraPassword",
             params.DB_USE_SSL: False,
-            params.CONTROL_TYPE_RESOURCE_SCHEMA: json_schema
+            params.CONTROL_TYPE_RESOURCE_SCHEMA: resource_schema,
+            params.CONTROL_TYPE_METADATA_SCHEMA: metadata_schema
         }
         cls._storage_handler = AuroraPostgresStorageHandler(table_name="MyItem_dev", primary_key_attribute="id",
                                                             region="eu-west-1",

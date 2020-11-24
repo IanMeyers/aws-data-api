@@ -1,0 +1,29 @@
+{
+  "$id": "https://example.com/myitem-metadata.schema.json",
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": true,
+  "properties": {
+    "meta1": {
+      "description": "Attribute 1",
+      "type": "string"
+    },
+    "meta2": {
+      "description": "Attribute 2",
+      "type": "integer"
+    },
+    "meta3": {
+      "description": "Attribute 3",
+      "type": "boolean"
+    },
+    "id": {
+      "description": "Primary Identifier",
+      "type": "string"
+    }
+  },
+  "required": [
+    "meta1",
+    "meta2"
+  ],
+  "title": "MyItem-Metadata",
+  "type": "object"
+}
