@@ -8,7 +8,7 @@ tracemalloc.start()
 sys.path.append("../chalicelib")
 
 import parameters as params
-from aurora_pg_storage_handler import AuroraPostgresStorageHandler
+from aurora_pg_storage_handler import DataAPIStorageHandler
 import warnings
 import json
 import uuid
@@ -32,6 +32,9 @@ class RdbmsStorageTests(unittest.TestCase):
             resource_schema = json.load(f)
         with open(f"test_metadata_schema.json", 'r') as f:
             metadata_schema = json.load(f)
+        # load the chalice config for extended configuration
+        with open("../.chalice/config.json", 'r') as f:
+            extended_config = json.load(f).get("stages").get('dev')
 
         other_args = {
             params.CLUSTER_ADDRESS: cls._cluster_address,
@@ -43,16 +46,18 @@ class RdbmsStorageTests(unittest.TestCase):
             params.CONTROL_TYPE_RESOURCE_SCHEMA: resource_schema,
             params.CONTROL_TYPE_METADATA_SCHEMA: metadata_schema
         }
-        cls._storage_handler = AuroraPostgresStorageHandler(table_name="MyItem_dev", primary_key_attribute="id",
-                                                            region="eu-west-1",
-                                                            delete_mode='HARD', allow_runtime_delete_mode_change=True,
-                                                            table_indexes=["attr2"], metadata_indexes=None,
-                                                            crawler_rolename=None,
-                                                            catalog_database=None, allow_non_itemmaster_writes=False,
-                                                            strict_occv=True,
-                                                            gremlin_address=None, deployed_account=None,
-                                                            pitr_enabled=None, kms_key_arn=None,
-                                                            schema_validation_refresh_hitcount=None, **other_args)
+        cls._storage_handler = DataAPIStorageHandler(table_name="MyItem_dev", primary_key_attribute="id",
+                                                     region="eu-west-1",
+                                                     delete_mode='HARD', allow_runtime_delete_mode_change=True,
+                                                     table_indexes=["attr2"], metadata_indexes=None,
+                                                     crawler_rolename="glue-role",
+                                                     catalog_database='data-api', allow_non_itemmaster_writes=False,
+                                                     strict_occv=True,
+                                                     gremlin_address=None, deployed_account=None,
+                                                     pitr_enabled=None, kms_key_arn=None,
+                                                     schema_validation_refresh_hitcount=None,
+                                                     extended_config=extended_config,
+                                                     **other_args)
 
     @classmethod
     def tearDownClass(cls) -> None:

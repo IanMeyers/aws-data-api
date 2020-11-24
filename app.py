@@ -78,9 +78,6 @@ log = utils.setup_logging()
 # create an API Metadata Handler
 api_metadata_handler = ApiMetadata(REGION, log)
 
-# create a cache of all API references tracked by this deployment stage
-api_cache = DataApiCache(app=app, stage=STAGE, region=REGION, logger=log)
-
 # create the streams integration handler, which is used by the lambda function embedded at the end of this app
 es_indexer = None
 
@@ -100,6 +97,13 @@ try:
         cors = CORSConfig(**cors_config.get("custom"))
 except FileNotFoundError:
     pass
+
+# open the config.json so it can be used as an extended configuration source
+with open('.chalice/config.json', 'r') as f:
+    _extended_config = json.load(f).get("stages").get(STAGE)
+
+# create a cache of all API references tracked by this deployment stage
+api_cache = DataApiCache(app=app, stage=STAGE, region=REGION, logger=log, extended_config=_extended_config)
 
 
 # using a functools wrapper here as normal python decorators aren't compatible with the call signature of chalice
@@ -204,7 +208,8 @@ def get_all_data_apis():
 def provision_api(api_name):
     body = app.current_request.json_body
 
-    return dapi.async_provision(api_name=api_name, stage=STAGE, region=REGION, logger=log, **body)
+    return dapi.async_provision(api_name=api_name, stage=STAGE, region=REGION, logger=log,
+                                extended_config=_extended_config, **body)
 
 
 @app.route('/{api_name}/drop', methods=['PUT'], authorizer=use_authorizer, cors=cors)

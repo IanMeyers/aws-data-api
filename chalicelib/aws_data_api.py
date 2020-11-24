@@ -77,7 +77,8 @@ def get_registry(region: str, stage: str, logger: logging.Logger = None) -> list
 
 
 # method to stand up a new namespace for Data API's via an async lambda
-def async_provision(api_name: str, stage: str, region: str, logger: logging.Logger, **kwargs) -> None:
+def async_provision(api_name: str, stage: str, region: str, logger: logging.Logger, extended_config: dict = None,
+                    **kwargs) -> None:
     """
     Method to provision a new API Namespace in the specified Stage and Region. Get Namespace status with :func:`~aws_data_api.get_api_status`.
 
@@ -162,6 +163,7 @@ class AwsDataAPI:
     _lambda_client = None
     _cloudwatch_emitter = None
     _api_metadata_handler = None
+    _extended_config = None
 
     def __init__(self, **kwargs):
         self._region = kwargs.get(params.REGION, os.getenv('AWS_REGION'))
@@ -199,6 +201,7 @@ class AwsDataAPI:
                                                        params.DEFAULT_NON_ITEM_MASTER_WRITE_ALLOWED)
         self._strict_occv = kwargs.get(params.STRICT_OCCV, params.DEFAULT_STRICT_OCCV)
         self._catalog_database = kwargs.get(params.CATALOG_DATABASE, params.DEFAULT_CATALOG_DATABASE)
+        self._extended_config = kwargs.get(params.EXTENDED_CONFIG)
 
         # setup the storage handler which implements the backend data api functionality
         self._storage_handler = self._get_storage_handler(table_name=self._table_name,
@@ -217,7 +220,8 @@ class AwsDataAPI:
                                                           handler_name=kwargs[params.STORAGE_HANDLER],
                                                           pitr_enabled=bool(kwargs.get(params.PITR_ENABLED,
                                                                                        params.DEFAULT_PITR_ENABLED)),
-                                                          kms_key_arn=kwargs.get(params.STORAGE_CRYPTO_KEY_ARN, None))
+                                                          kms_key_arn=kwargs.get(params.STORAGE_CRYPTO_KEY_ARN, None),
+                                                          extended_config=self._extended_config)
 
         # setup the gremlin integration if one has been provided
         if self._gremlin_address is not None:
@@ -269,7 +273,7 @@ class AwsDataAPI:
                              allow_runtime_delete_mode_change, table_indexes,
                              metadata_indexes, schema_validation_refresh_hitcount, crawler_rolename, catalog_database,
                              allow_non_itemmaster_writes, strict_occv, deployed_account, handler_name,
-                             pitr_enabled=None, kms_key_arn=None):
+                             pitr_enabled=None, kms_key_arn=None, extended_config=None):
         """
         Method to load a Storage Handler class based upon the configured handler name.
 
@@ -309,7 +313,8 @@ class AwsDataAPI:
                              strict_occv,
                              deployed_account,
                              pitr_enabled,
-                             kms_key_arn)
+                             kms_key_arn,
+                             extended_config)
 
     # simple accessor method for the pk_name attribute, which is required in some cases for API integration
     def get_primary_key(self):

@@ -12,7 +12,7 @@ import traceback
 import json
 
 
-class AuroraPostgresStorageHandler:
+class DataAPIStorageHandler:
     _region = None
     _glue_client = None
     _sts_client = None
@@ -43,6 +43,7 @@ class AuroraPostgresStorageHandler:
     _db_conn = None
     _ssl = False
     _sql_helper = None
+    _extended_config = None
 
     def _get_sql(self, name):
         sql = self._sql_helper.get(name)
@@ -60,7 +61,11 @@ class AuroraPostgresStorageHandler:
 
         def _add_output():
             try:
-                output.append(cursor.fetchall()[0])
+                rows = cursor.fetchall()
+                if rows is not None and rows != ():
+                    output.append(rows[0])
+                else:
+                    output.append(None)
             except ProgrammingError as e:
                 if 'no result set' in str(e):
                     output.append(None)
@@ -158,24 +163,50 @@ class AuroraPostgresStorageHandler:
 
         self._run_commands([statement])
 
+        self._logger.info(f"Created new Database Table {table_ref}")
+
         return True
+
+    def _verify_catalog(self, table_ref: str) -> None:
+        # setup a glue connection and crawler for this database and table
+        args = {
+            params.EXTENDED_CONFIG: self._extended_config,
+            params.CLUSTER_ADDRESS: self._cluster_address,
+            params.CLUSTER_PORT: self._cluster_port,
+            params.DB_NAME: self._cluster_db,
+            params.DB_USERNAME: self._cluster_user,
+            params.DB_USERNAME_PSTORE_ARN: self._cluster_pstore
+        }
+        # interface uses kwargs as this method supports both dynamo and rds based crawlers
+        try:
+            utils.verify_crawler(table_name=table_ref, crawler_rolename=self._crawler_rolename,
+                                 catalog_db=self._catalog_database,
+                                 datasource_type=params.RDS_PG_STORAGE_HANDLER,
+                                 **args)
+        except Exception as e:
+            self._logger.error(e)
 
     def _verify_table(self, table_ref: str, table_schema: dict) -> None:
         try:
             cursor = self._db_conn.cursor()
             cursor.execute(f"select count(9) from {table_ref}")
             res = cursor.fetchone()
-        except ProgrammingError as e:
-            if "not exist" in str(e):
+        except ProgrammingError as pe:
+            if "not exist" in str(pe):
                 # table doesn't exist so create it based on the current schema
-                ok = self._create_table_from_schema(table_ref, table_schema)
+                self._create_table_from_schema(table_ref, table_schema)
             else:
-                raise exceptions.DetailedException(e.message)
+                raise exceptions.DetailedException(pe.message)
+        except Exception as e:
+            self._logger.error(e)
 
     def _create_index(self, table_ref: str, column_name: str) -> None:
-        statement = f"create index {table_ref}_{column_name} on {table_ref} ({column_name})"
+        index_name = f"{table_ref}_{column_name}"
+        statement = f"create index {index_name} on {table_ref} ({column_name})"
 
         ok = self._run_commands([statement])
+
+        self._logger.info(f"Created new Index {index_name}")
 
     def _verify_indexes(self, table_ref: str, indexes: list) -> None:
         if indexes is not None:
@@ -248,7 +279,8 @@ class AuroraPostgresStorageHandler:
     def __init__(self, table_name, primary_key_attribute, region, delete_mode, allow_runtime_delete_mode_change,
                  table_indexes, metadata_indexes, crawler_rolename,
                  catalog_database, allow_non_itemmaster_writes, strict_occv, gremlin_address, deployed_account,
-                 pitr_enabled=None, kms_key_arn=None, schema_validation_refresh_hitcount=None, **kwargs):
+                 pitr_enabled=None, kms_key_arn=None, schema_validation_refresh_hitcount=None, extended_config=None,
+                 **kwargs):
         # setup class logger
         self._logger = utils.setup_logging()
 
@@ -256,7 +288,7 @@ class AuroraPostgresStorageHandler:
         log = self._logger
 
         # load the sql statement helper
-        with open(os.path.join(os.path.dirname(__file__), 'sql_fragments.json'), 'r') as f:
+        with open(os.path.join(os.path.dirname(__file__), 'sql_fragments_pg.json'), 'r') as f:
             self._sql_helper = json.load(f)
 
         # setup foundation properties
@@ -265,6 +297,9 @@ class AuroraPostgresStorageHandler:
         self._metadata_table_name = f"{table_name}_{params.METADATA}"
         self._pk_name = primary_key_attribute
         self._deployed_account = deployed_account
+        self._extended_config = extended_config
+        self._crawler_rolename = crawler_rolename
+        self._catalog_database = catalog_database
 
         # resolve connection details
         self._cluster_address = kwargs.get(params.CLUSTER_ADDRESS)
@@ -285,22 +320,21 @@ class AuroraPostgresStorageHandler:
         if self._cluster_pstore is None:
             raise exceptions.InvalidArgumentsException(
                 "Unable to connect to Target Cluster Database without SSM Parameter Store Password ARN")
-
-        # extract the password from ssm
-        _pstore_client = boto3.client('ssm', region_name=self._region)
-        _password_response = _pstore_client.get_parameter(Name=self._cluster_pstore)
-        if _password_response is None:
-            raise exceptions.DetailedException(
-                "Unable to connect to SSM Parameter Store")
         else:
-            _pwd = _password_response.get('Parameter').get('Value')
+            # extract the password from ssm
+            _pwd = utils.get_encrypted_parameter(parameter_name=self._cluster_pstore,
+                                                 region=self._region)
 
             # connect to the database
             self._db_conn = self._get_pg_conn(pwd=_pwd)
+            self._logger.info(f"Connected to {self._cluster_address}:{self._cluster_port} as {self._cluster_user}")
 
-            # verify the table exists
+            # verify the resource table, indexes, and catalog registry exists
             self._verify_table(self._resource_table_name, self._resource_schema)
             self._verify_indexes(self._resource_table_name, table_indexes)
+            self._verify_catalog(self._resource_table_name)
+
+            # verify the metadata table, indexes, and catalog registry exists
             self._verify_table(self._metadata_table_name, self._metadata_schema)
             self._verify_indexes(self._metadata_table_name, metadata_indexes)
 

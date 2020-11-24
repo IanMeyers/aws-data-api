@@ -13,6 +13,7 @@ import chalicelib.parameters as params
 
 _sts_client = None
 _iam_client = None
+import chalicelib.exceptions
 
 
 def setup_logging(set_name: str = None):
@@ -336,30 +337,95 @@ def get_all_data_apis():
     return response
 
 
-def verify_crawler(table_name, crawler_rolename, catalog_db):
-    glue_client = _get_glue_client()
+def get_encrypted_parameter(parameter_name, region):
+    _pstore_client = boto3.client('ssm', region_name=region)
+    _password_response = _pstore_client.get_parameter(Name=parameter_name)
 
+    if _password_response is None:
+        raise DetailedException(f"Unable to connect to SSM Parameter Store in {region}")
+    else:
+        _pwd = _password_response.get('Parameter').get('Value')
+        return _pwd
+
+
+def verify_crawler(table_name, crawler_rolename, catalog_db, datasource_type: str = params.DEFAULT_STORAGE_HANDLER,
+                   **kwargs):
+    glue_client = _get_glue_client()
+    crawler_description = f'Crawler for AWS Data API Table {table_name}'
     try:
         glue_client.get_crawler(Name=table_name)
     except glue_client.exceptions.EntityNotFoundException:
-        glue_client.create_crawler(
-            Name=table_name,
-            Role=crawler_rolename,
-            DatabaseName=catalog_db,
-            Description=f'Crawler for AWS Data API Table {table_name}',
-            Targets={
-                'DynamoDBTargets': [
-                    {
-                        'Path': table_name
-                    },
-                ]
-            },
-            # run every hour on the hour
-            Schedule='cron(0 * * * ? *)',
-            SchemaChangePolicy={
-                'UpdateBehavior': 'UPDATE_IN_DATABASE',
+        if datasource_type == params.DYNAMO_STORAGE_HANDLER:
+            glue_client.create_crawler(
+                Name=table_name,
+                Role=crawler_rolename,
+                DatabaseName=catalog_db,
+                Description=crawler_description,
+                Targets={
+                    'DynamoDBTargets': [
+                        {
+                            'Path': table_name
+                        },
+                    ]
+                },
+                # run every hour on the hour
+                Schedule='cron(0 * * * ? *)',
+                SchemaChangePolicy={
+                    'UpdateBehavior': 'UPDATE_IN_DATABASE',
+                }
+            )
+        elif datasource_type == params.RDS_PG_STORAGE_HANDLER:
+            database_name = kwargs.get(params.CLUSTER_ADDRESS).split('.')[0]
+            extended_config = kwargs.get(params.EXTENDED_CONFIG)
+            connection_name = f"{params.AWS_DATA_API_SHORTNAME}.{database_name}"
+            _pwd = get_encrypted_parameter(parameter_name=kwargs.get(params.DB_USERNAME_PSTORE_ARN),
+                                           region=get_region())
+
+            # create a connection
+            conn_args = {
+                'Name': connection_name,
+                'Description': f"{params.AWS_DATA_API_NAME} - {database_name}",
+                'ConnectionType': 'JDBC',
+                'ConnectionProperties': {
+                    'JDBC URL': f'jdbc:postgresql://{kwargs.get(params.CLUSTER_ADDRESS)}:{kwargs.get(params.CLUSTER_PORT)}/{kwargs.get(params.DB_NAME)}',
+                    'Username': kwargs.get(params.DB_USERNAME),
+                    'Password': _pwd
+                },
+                'PhysicalConnectionRequirements': {
+                    'SubnetId': extended_config.get('subnet_ids')[0],
+                    'SecurityGroupIdList': extended_config.get('security_group_ids')
+                }
             }
-        )
+            try:
+                glue_client.create_connection(
+                    CatalogId=catalog_db,
+                    ConnectionInput=conn_args
+                )
+                # create a crawler
+                crawler_args = {"Name": table_name,
+                                "Role": crawler_rolename,
+                                "DatabaseName": catalog_db,
+                                "Description": crawler_description,
+                                "Targets": {
+                                    'JdbcTargets': [
+                                        {
+                                            'ConnectionName': connection_name,
+                                            'Path': f"{database_name}/public/{table_name}"
+                                        }
+                                    ]
+                                },
+                                # run every hour on the hour
+                                "Schedule": 'cron(0 * * * ? *)',
+                                "SchemaChangePolicy": {
+                                    'UpdateBehavior': 'UPDATE_IN_DATABASE',
+                                }
+                                }
+                glue_client.create_crawler(
+                    **crawler_args
+                )
+            except glue_client.exceptions.AccessDeniedException as ade:
+                print(ade)
+                raise ade
 
 
 def run_glue_export(table_name, s3_export_path, kms_key_arn, read_pct, log_path, export_role, dpu):

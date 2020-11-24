@@ -16,12 +16,14 @@ class DataApiCache:
     _stage = None
     _region = None
     _logger = None
+    _extended_config = None
 
-    def __init__(self, app: Chalice, stage: str, region: str, logger: logging.Logger):
+    def __init__(self, app: Chalice, stage: str, region: str, logger: logging.Logger, extended_config: dict = None):
         self._app = app
         self._stage = stage
         self._region = region
         self._logger = logger
+        self._extended_config = extended_config
 
     def add(self, key: str, api: AwsDataAPI):
         v = {
@@ -60,6 +62,7 @@ class DataApiCache:
                     api_metadata['app'] = self._app
                     api_metadata[params.REGION] = self._region
                     api_metadata['ApiName'] = api_name
+                    api_metadata[params.EXTENDED_CONFIG] = self._extended_config
 
                     # instantiate the API from metadata
                     api = dapi.load_api(**api_metadata)

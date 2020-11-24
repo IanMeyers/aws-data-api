@@ -65,7 +65,7 @@ class DataAPIStorageHandler:
     def __init__(self, table_name, primary_key_attribute, region, delete_mode, allow_runtime_delete_mode_change,
                  table_indexes, metadata_indexes, schema_validation_refresh_hitcount, crawler_rolename,
                  catalog_database, allow_non_itemmaster_writes, strict_occv, deployed_account,
-                 pitr_enabled=None, kms_key_arn=None, logger=None):
+                 pitr_enabled=None, kms_key_arn=None, logger=None, extended_config=None):
         # setup class logger
         if logger is None:
             self._logger = utils.setup_logging()
@@ -742,8 +742,8 @@ class DataAPIStorageHandler:
         try:
             target = params.CONTROL_TYPE_RESOURCE_SCHEMA if schema_type == params.RESOURCE else params.CONTROL_TYPE_METADATA_SCHEMA
             entry = self._dynamo_utils.get_control_item(table_ref=self._control_table,
-                                                         api_name=self._table_name,
-                                                         control_type=target)
+                                                        api_name=self._table_name,
+                                                        control_type=target)
             schema = None
             if entry is not None:
                 schema = entry.get(target)
