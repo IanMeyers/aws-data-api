@@ -61,8 +61,8 @@ class AuroraPostgresStorageHandler:
         def _add_output():
             try:
                 output.append(cursor.fetchall()[0])
-            except ProgrammingError:
-                if e['M'] == 'no result set':
+            except ProgrammingError as e:
+                if 'no result set' in str(e):
                     output.append(None)
                 else:
                     output.append(e)
@@ -189,7 +189,7 @@ class AuroraPostgresStorageHandler:
 
     def _extract_type(self, input):
         if type(input) == str:
-            set_val = f'"{input}"'
+            set_val = f"'{input}'"
         elif type(input) == bool:
             if input is True:
                 set_val = 1
@@ -217,9 +217,10 @@ class AuroraPostgresStorageHandler:
         return output
 
     def _create_update_statement(self, table_ref: str, pk_name: str, input: dict, item_id: str) -> str:
-        return f'update {table_ref} set {",".join(self._synthesize_update(input))} where {pk_name} = "{item_id}"'
+        updates = ",".join(self._synthesize_update(input))
+        return f"update {table_ref} set {updates} where {pk_name} = '{item_id}'"
 
-    def _synthesize_insert(self, input: dict) -> tuple:
+    def _synthesize_insert(self, pk_name: str, pk_value: str, input: dict) -> tuple:
         '''Generate a valid list of insert clauses from an input dict. For example:
 
         {"a":1, "b":"blah"} becomes [1, "blah"]
@@ -227,16 +228,16 @@ class AuroraPostgresStorageHandler:
         :param input:
         :return:
         '''
-        columns = []
-        values = []
+        columns = [pk_name]
+        values = [self._extract_type(pk_value)]
         for k in input.keys():
             columns.append(k)
             values.append(self._extract_type(input.get(k)))
 
         return columns, values
 
-    def _create_insert_statement(self, table_ref: str, input: dict) -> str:
-        insert = self._synthesize_insert(input)
+    def _create_insert_statement(self, table_ref: str, pk_name: str, pk_value: str, input: dict) -> str:
+        insert = self._synthesize_insert(pk_name=pk_name, pk_value=pk_value, input=input)
         columns = ",".join(insert[0])
 
         # generate a string list as the values statement may be multi-type
@@ -331,7 +332,7 @@ class AuroraPostgresStorageHandler:
     def delete(id: str, caller_identity: str, **kwargs):
         pass
 
-    def update_item(self, id: str, caller_identity: str, **kwargs):
+    def update_item(self, id: str, caller_identity: str, **kwargs) -> bool:
         ''' Method ot merge an item into the table. We will first attempt to update an existing item, and when that
         fails we will insert a new item
 
@@ -340,7 +341,23 @@ class AuroraPostgresStorageHandler:
         :param kwargs:
         :return:
         '''
-        pass
+        update = self._create_update_statement(table_ref=self._resource_table_name, pk_name=self._pk_name, input=kwargs,
+                                               item_id=id)
+        output = self._run_commands([update])
+
+        if output[0] is None:
+            # update statement didn't work, so insert the value
+            insert = self._create_insert_statement(table_ref=self._resource_table_name, pk_name=self._pk_name,
+                                                   pk_value=id, input=kwargs)
+
+            output = self._run_commands([insert])
+
+            if output[0] is None:
+                return True
+            else:
+                raise exceptions.DetailedException("Unable to insert or update Resource")
+        else:
+            return True
 
     def drop_table(self, table_name: str, do_export: bool):
         pass
