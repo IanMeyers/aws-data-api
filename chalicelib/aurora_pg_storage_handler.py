@@ -235,6 +235,15 @@ class AuroraPostgresStorageHandler:
 
         return columns, values
 
+    def _create_insert_statement(self, table_ref: str, input: dict) -> str:
+        insert = self._synthesize_insert(input)
+        columns = ",".join(insert[0])
+
+        # generate a string list as the values statement may be multi-type
+        values = [str(x) for x in insert[1]]
+
+        return f'insert into {table_ref} ({columns}) values ({",".join(values)})'
+
     def __init__(self, table_name, primary_key_attribute, region, delete_mode, allow_runtime_delete_mode_change,
                  table_indexes, metadata_indexes, crawler_rolename,
                  catalog_database, allow_non_itemmaster_writes, strict_occv, gremlin_address, deployed_account,

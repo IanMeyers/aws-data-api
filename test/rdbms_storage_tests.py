@@ -102,6 +102,9 @@ class RdbmsStorageTests(unittest.TestCase):
         self.assertEqual(values[2], 0)
         self.assertEqual(values[3], 1)
 
+        insert = self._storage_handler._create_insert_statement(table_ref='mytable', input=input)
+        self.assertEqual(insert, 'insert into mytable (a,b,c,d) values ("12345",999,0,1)')
+
     def test_check(self):
         found = self._storage_handler.check("xyz")
         self.assertFalse(found)
