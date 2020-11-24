@@ -41,9 +41,9 @@ class AuroraPostgresStorageHandler:
     _db_conn = None
     _ssl = False
 
-    def _run_commands(self, commands):
+    def _run_commands(self, commands:list) -> list:
         cursor = self._db_conn.cursor()
-
+        output = []
         for c in commands:
             if c is not None:
                 try:
@@ -53,15 +53,19 @@ class AuroraPostgresStorageHandler:
                         for s in subcommands:
                             if s is not None and s != '':
                                 cursor.execute(s.replace("\n", ""))
+                                output.append(cursor.fetchall())
                     else:
                         cursor.execute(c)
+                        output.append(cursor.fetchall())
                 except Exception as e:
                     # cowardly bail on errors
                     self._db_conn.rollback()
                     print(traceback.format_exc())
-                    return False
+                    output.append(e)
+            else:
+                output.append(None)
 
-        return True
+        return output
 
     def _get_pg_conn(self, pwd: str):
         pid = str(os.getpid())
