@@ -350,9 +350,10 @@ def get_encrypted_parameter(parameter_name, region):
 
 
 def verify_crawler(table_name, crawler_rolename, catalog_db, datasource_type: str = params.DEFAULT_STORAGE_HANDLER,
-                   deployed_account: str = None, logger: Logger = None,
+                   deployed_account: str = None, logger: Logger = None, crawler_prefix: str = None,
                    **kwargs):
     glue_client = _get_glue_client()
+    crawler_name = table_name if crawler_prefix is None else f"{crawler_prefix}-{table_name}"
     crawler_description = f'Crawler for AWS Data API Table {table_name}'
     try:
         glue_client.get_crawler(Name=table_name)
@@ -417,7 +418,6 @@ def verify_crawler(table_name, crawler_rolename, catalog_db, datasource_type: st
 
             # create a crawler
             try:
-                crawler_name = f"{database_name}-{table_name}"
                 crawler_args = {"Name": crawler_name,
                                 "Role": crawler_rolename,
                                 "DatabaseName": catalog_db,

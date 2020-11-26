@@ -153,7 +153,8 @@ class DataAPIStorageHandler:
                              datasource_type=params.RDS_PG_STORAGE_HANDLER,
                              deployed_account=self._deployed_account,
                              region=self._region,
-                             logger = self._logger,
+                             logger=self._logger,
+                             crawler_prefix=f'PG-{self._cluster_address.split(".")[0]}',
                              **args)
 
     def _verify_table(self, table_ref: str, table_schema: dict) -> None:
