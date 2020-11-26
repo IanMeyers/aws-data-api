@@ -221,13 +221,17 @@ class DataAPIStorageHandler:
 
         return set_val
 
-    def _who_column_update(self, caller_identity: str):
-        return [
-            f"{_who_col_map.get(params.ITEM_VERSION)} = {_who_col_map.get(params.ITEM_VERSION)}+1",
+    def _who_column_update(self, caller_identity: str, version_increment: bool = True):
+        clauses = [
             f"{_who_col_map.get(params.LAST_UPDATE_ACTION)} = '{params.ACTION_UPDATE}'",
             f"{_who_col_map.get(params.LAST_UPDATE_DATE)} = CURRENT_DATE",
             f"{_who_col_map.get(params.LAST_UPDATED_BY)} = '{caller_identity}'"
         ]
+
+        if version_increment is True:
+            clauses.append(f"{_who_col_map.get(params.ITEM_VERSION)} = {_who_col_map.get(params.ITEM_VERSION)}+1")
+
+        return clauses
 
     def _who_column_list(self):
         return [
@@ -245,7 +249,7 @@ class DataAPIStorageHandler:
             f"'{caller_identity}'"
         ]
 
-    def _synthesize_update(self, input: dict, caller_identity: str) -> list:
+    def _synthesize_update(self, input: dict, caller_identity: str, version_increment: bool = True) -> list:
         ''' Generate a valid list of update clauses from an input dict. For example:
 
         {"a":1, "b":2} becomes ["a = 1", "b=2"]
@@ -260,14 +264,20 @@ class DataAPIStorageHandler:
             output.append(f"{k} = {set_val}")
 
         # now add the 'who' column and item version updates
-        output.extend(self._who_column_update(caller_identity))
+        output.extend(self._who_column_update(caller_identity, version_increment))
 
         return output
 
     def _create_update_statement(self, table_ref: str, pk_name: str, input: dict, item_id: str,
-                                 caller_identity: str) -> str:
-        updates = ",".join(self._synthesize_update(input, caller_identity))
-        return f"update {table_ref} set {updates} where {pk_name} = '{item_id}' and {_who_col_map.get(params.DELETED)} = FALSE"
+                                 caller_identity: str, version_increment: bool = True,
+                                 check_delete: bool = True) -> str:
+        updates = ",".join(self._synthesize_update(input, caller_identity, version_increment))
+        statement = f"update {table_ref} set {updates} where {pk_name} = '{item_id}'"
+
+        if check_delete is True:
+            statement = statement + f" and {_who_col_map.get(params.DELETED)} = FALSE"
+
+        return statement
 
     def _generate_keylist_for_obj(self, schema, pk_name):
         keys = [pk_name]
@@ -394,8 +404,15 @@ class DataAPIStorageHandler:
     def get_metadata(self, id: str):
         pass
 
+    def _create_restore_statement(self, id: str, caller_identity: str):
+        return self._create_update_statement(table_ref=self._resource_table_name, pk_name=self._pk_name,
+                                             input={_who_col_map.get(params.DELETED): False},
+                                             item_id=id, caller_identity=caller_identity, version_increment=False,
+                                             check_delete=False)
+
     def restore(self, id: str, caller_identity: str):
-        pass
+        restore = self._create_restore_statement(id, caller_identity)
+        self._run_commands([restore])
 
     def delete(id: str, caller_identity: str, **kwargs):
         pass
