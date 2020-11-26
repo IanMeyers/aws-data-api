@@ -11,6 +11,14 @@ import socket
 import traceback
 import json
 
+_who_col_map = {
+    params.ITEM_VERSION: "item_version",
+    params.LAST_UPDATE_ACTION: "last_update_action",
+    params.LAST_UPDATE_DATE: "last_update_date",
+    params.LAST_UPDATED_BY: "last_updated_by",
+    params.DELETED: "deleted"
+}
+
 
 class DataAPIStorageHandler:
     _region = None
@@ -118,6 +126,15 @@ class DataAPIStorageHandler:
 
         return conn
 
+    def _generate_who_cols(self):
+        return [
+            f"{_who_col_map.get(params.ITEM_VERSION)} int not null default 1",
+            f"{_who_col_map.get(params.LAST_UPDATE_ACTION)} varchar(15) null",
+            f"{_who_col_map.get(params.LAST_UPDATE_DATE)} date not null",
+            f"{_who_col_map.get(params.LAST_UPDATED_BY)} varchar(60) not null",
+            f"{_who_col_map.get(params.DELETED)} boolean not null default FALSE"
+        ]
+
     def _create_table_from_schema(self, table_ref: str, table_schema: dict) -> bool:
         column_spec = []
         prop = table_schema.get('properties')
@@ -125,6 +142,8 @@ class DataAPIStorageHandler:
         for p in prop.keys():
             column_spec.append(
                 f"{p} {utils.json_to_pg(p_name=p, p_spec=prop.get(p), p_required=self._resource_schema.get('required'), pk_name=self._pk_name)}")
+
+        column_spec.extend(self._generate_who_cols())
 
         # synthesize the create table statement
         statement = f"create table if not exists {table_ref}({','.join(column_spec)})"
@@ -202,7 +221,31 @@ class DataAPIStorageHandler:
 
         return set_val
 
-    def _synthesize_update(self, input: dict) -> list:
+    def _who_column_update(self, caller_identity: str):
+        return [
+            f"{_who_col_map.get(params.ITEM_VERSION)} = {_who_col_map.get(params.ITEM_VERSION)}+1",
+            f"{_who_col_map.get(params.LAST_UPDATE_ACTION)} = '{params.ACTION_UPDATE}'",
+            f"{_who_col_map.get(params.LAST_UPDATE_DATE)} = CURRENT_DATE",
+            f"{_who_col_map.get(params.LAST_UPDATED_BY)} = '{caller_identity}'"
+        ]
+
+    def _who_column_list(self):
+        return [
+            _who_col_map.get(params.ITEM_VERSION),
+            _who_col_map.get(params.LAST_UPDATE_ACTION),
+            _who_col_map.get(params.LAST_UPDATE_DATE),
+            _who_col_map.get(params.LAST_UPDATED_BY)
+        ]
+
+    def _who_column_insert(self, caller_identity: str):
+        return [
+            f"0",
+            f"'{params.ACTION_CREATE}'",
+            f"CURRENT_DATE",
+            f"'{caller_identity}'"
+        ]
+
+    def _synthesize_update(self, input: dict, caller_identity: str) -> list:
         ''' Generate a valid list of update clauses from an input dict. For example:
 
         {"a":1, "b":2} becomes ["a = 1", "b=2"]
@@ -216,11 +259,15 @@ class DataAPIStorageHandler:
 
             output.append(f"{k} = {set_val}")
 
+        # now add the 'who' column and item version updates
+        output.extend(self._who_column_update(caller_identity))
+
         return output
 
-    def _create_update_statement(self, table_ref: str, pk_name: str, input: dict, item_id: str) -> str:
-        updates = ",".join(self._synthesize_update(input))
-        return f"update {table_ref} set {updates} where {pk_name} = '{item_id}'"
+    def _create_update_statement(self, table_ref: str, pk_name: str, input: dict, item_id: str,
+                                 caller_identity: str) -> str:
+        updates = ",".join(self._synthesize_update(input, caller_identity))
+        return f"update {table_ref} set {updates} where {pk_name} = '{item_id}' and {_who_col_map.get(params.DELETED)} = FALSE"
 
     def _generate_keylist_for_obj(self, schema, pk_name):
         keys = [pk_name]
@@ -229,7 +276,7 @@ class DataAPIStorageHandler:
 
         return keys
 
-    def _synthesize_insert(self, pk_name: str, pk_value: str, input: dict) -> tuple:
+    def _synthesize_insert(self, pk_name: str, pk_value: str, input: dict, caller_identity) -> tuple:
         '''Generate a valid list of insert clauses from an input dict. For example:
 
         {"a":1, "b":"blah"} becomes [1, "blah"]
@@ -238,14 +285,20 @@ class DataAPIStorageHandler:
         :return:
         '''
         columns = self._generate_keylist_for_obj(schema=input, pk_name=pk_name)
+        columns.extend(self._who_column_list())
+
         values = [self._extract_type(pk_value)]
         for k in input.keys():
             values.append(self._extract_type(input.get(k)))
 
+        values.extend(self._who_column_insert(caller_identity=caller_identity))
+
         return columns, values
 
-    def _create_insert_statement(self, table_ref: str, pk_name: str, pk_value: str, input: dict) -> str:
-        insert = self._synthesize_insert(pk_name=pk_name, pk_value=pk_value, input=input)
+    def _create_insert_statement(self, table_ref: str, pk_name: str, pk_value: str, input: dict,
+                                 caller_identity: str) -> str:
+        insert = self._synthesize_insert(pk_name=pk_name, pk_value=pk_value, input=input,
+                                         caller_identity=caller_identity)
         columns = ",".join(insert[0])
 
         # generate a string list as the values statement may be multi-type
@@ -357,13 +410,13 @@ class DataAPIStorageHandler:
         :return:
         '''
         update = self._create_update_statement(table_ref=self._resource_table_name, pk_name=self._pk_name, input=kwargs,
-                                               item_id=id)
+                                               item_id=id, caller_identity=caller_identity)
         output = self._run_commands([update])
 
         if output[0] is None:
             # update statement didn't work, so insert the value
             insert = self._create_insert_statement(table_ref=self._resource_table_name, pk_name=self._pk_name,
-                                                   pk_value=id, input=kwargs)
+                                                   pk_value=id, input=kwargs, caller_identity=caller_identity)
 
             output = self._run_commands([insert])
 

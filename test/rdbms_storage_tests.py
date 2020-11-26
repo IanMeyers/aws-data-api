@@ -23,6 +23,7 @@ class RdbmsStorageTests(unittest.TestCase):
     _storage_handler = None
     _cluster_pstore = "DataApiAuroraPassword"
     _item_id = str(uuid.uuid4())
+    _caller_identity = 'bob'
 
     @classmethod
     def setUpClass(cls) -> None:
@@ -81,18 +82,20 @@ class RdbmsStorageTests(unittest.TestCase):
             "d": True
         }
 
-        updates = self._storage_handler._synthesize_update(input)
+        updates = self._storage_handler._synthesize_update(input, self._caller_identity)
 
-        self.assertEqual(4, len(updates))
+        self.assertEqual(8, len(updates))
         self.assertEqual(updates[0], "a = '12345'")
         self.assertEqual(updates[1], 'b = 999')
         self.assertEqual(updates[2], 'c = 0')
         self.assertEqual(updates[3], 'd = 1')
 
         update_statement = self._storage_handler._create_update_statement(table_ref='my_table', pk_name="id",
-                                                                          input=input, item_id="123")
+                                                                          input=input, item_id="123",
+                                                                          caller_identity=self._caller_identity)
 
-        self.assertEqual(update_statement, "update my_table set a = '12345',b = 999,c = 0,d = 1 where id = '123'")
+        self.assertEqual(update_statement,
+                         "update my_table set a = '12345',b = 999,c = 0,d = 1,item_version = item_version+1,last_update_action = 'update',last_update_date = CURRENT_DATE,last_updated_by = 'bob' where id = '123' and deleted = FALSE")
 
     def test_insert_clause(self):
         input = {
@@ -102,18 +105,19 @@ class RdbmsStorageTests(unittest.TestCase):
             "d": True
         }
 
-        inserts = self._storage_handler._synthesize_insert(pk_name="id", pk_value=self._item_id, input=input)
+        inserts = self._storage_handler._synthesize_insert(pk_name="id", pk_value=self._item_id, input=input,
+                                                           caller_identity=self._caller_identity)
 
         columns = inserts[0]
         values = inserts[1]
 
-        # check column output
-        self.assertEqual(5, len(columns))
+        # check column output - 5 columns provided and 4 who columns
+        self.assertEqual(9, len(columns))
         for i, k in enumerate(input):
             self.assertEqual(k, columns[i + 1])
 
         # check value output
-        self.assertEqual(5, len(values))
+        self.assertEqual(9, len(values))
         self.assertEqual(values[0], f"'{self._item_id}'")
         self.assertEqual(values[1], "'12345'")
         self.assertEqual(values[2], 999)
@@ -121,8 +125,10 @@ class RdbmsStorageTests(unittest.TestCase):
         self.assertEqual(values[4], 1)
 
         insert = self._storage_handler._create_insert_statement(table_ref='mytable', pk_name="id",
-                                                                pk_value=self._item_id, input=input)
-        self.assertEqual(insert, f"insert into mytable (id,a,b,c,d) values ('{self._item_id}','12345',999,0,1)")
+                                                                pk_value=self._item_id, input=input,
+                                                                caller_identity=self._caller_identity)
+        self.assertEqual(insert,
+                         f"insert into mytable (id,a,b,c,d,item_version,last_update_action,last_update_date,last_updated_by) values ('{self._item_id}','12345',999,0,1,0,'create',CURRENT_DATE,'bob')")
 
     def test_check(self):
         found = self._storage_handler.check("xyz")
@@ -135,7 +141,8 @@ class RdbmsStorageTests(unittest.TestCase):
             "attr1": v1,
             "attr2": v2
         }
-        update_response = self._storage_handler.update_item(id=self._item_id, caller_identity='bob', **item)
+        update_response = self._storage_handler.update_item(id=self._item_id, caller_identity=self._caller_identity,
+                                                            **item)
         self.assertTrue(update_response)
 
         # check that the item exists
@@ -149,7 +156,8 @@ class RdbmsStorageTests(unittest.TestCase):
             "attr1": v1,
             "attr2": v2
         }
-        update_response = self._storage_handler.update_item(id=self._item_id, caller_identity='bob', **item)
+        update_response = self._storage_handler.update_item(id=self._item_id, caller_identity=self._caller_identity,
+                                                            **item)
         self.assertTrue(update_response)
 
         # get the item back
