@@ -57,7 +57,7 @@ class RdbmsStorageTests(unittest.TestCase):
                                                      region="eu-west-1",
                                                      delete_mode='HARD', allow_runtime_delete_mode_change=True,
                                                      table_indexes=["attr2"], metadata_indexes=None,
-                                                     crawler_rolename="glue-role",
+                                                     crawler_rolename="DataAPICrawlerRole",
                                                      catalog_database='data-api', allow_non_itemmaster_writes=False,
                                                      strict_occv=True,
                                                      gremlin_address=None, deployed_account=account,

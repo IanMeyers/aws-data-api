@@ -413,6 +413,15 @@ def verify_crawler(table_name, crawler_rolename, catalog_db, datasource_type: st
                     ConnectionInput=conn_args
                 )
                 logger.info(f"Created new Connection {connection_name}")
+
+                crypt_settings = glue_client.get_data_catalog_encryption_settings(
+                    CatalogId=deployed_account
+                )
+
+                if crypt_settings is None or crypt_settings.get("DataCatalogEncryptionSettings").get(
+                        "ConnectionPasswordEncryption").get("ReturnConnectionPasswordEncrypted") is False:
+                    logger.warning(
+                        "Data Catalog is not encrypted. Passwords will be visible in cleartext. It is HIGHLY recommended that you enable Connection Password Encryption")
             except glue_client.exceptions.AlreadyExistsException:
                 pass
 
