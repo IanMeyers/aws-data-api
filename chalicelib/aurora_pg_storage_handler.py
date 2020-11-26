@@ -369,7 +369,7 @@ class DataAPIStorageHandler:
             self._verify_indexes(self._metadata_table_name, metadata_indexes)
 
     def check(self, id: str) -> bool:
-        statement = f"select count(9) from {self._resource_table_name} where {self._pk_name} = '{id}'"
+        statement = f"select count(9) from {self._resource_table_name} where {self._pk_name} = '{id}' and {_who_col_map.get(params.DELETED)} = FALSE"
 
         found = self._run_commands([statement])[0]
 
@@ -386,7 +386,7 @@ class DataAPIStorageHandler:
 
     def get(self, id: str):
         columns = list(self._resource_schema.get("properties").keys())
-        statement = f"select {','.join(columns)} from {self._resource_table_name} where {self._pk_name} = '{id}'"
+        statement = f"select {','.join(columns)} from {self._resource_table_name} where {self._pk_name} = '{id}' and {_who_col_map.get(params.DELETED)} = FALSE"
         output = self._run_commands([statement])
 
         return utils.pivot_resultset_into_json(output, columns)
