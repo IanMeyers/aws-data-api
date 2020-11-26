@@ -12,6 +12,7 @@ from aurora_pg_storage_handler import DataAPIStorageHandler
 import warnings
 import json
 import uuid
+import boto3
 
 
 class RdbmsStorageTests(unittest.TestCase):
@@ -50,6 +51,8 @@ class RdbmsStorageTests(unittest.TestCase):
             params.CONTROL_TYPE_RESOURCE_SCHEMA: resource_schema,
             params.CONTROL_TYPE_METADATA_SCHEMA: metadata_schema
         }
+        sts_client = boto3.client('sts')
+        account = sts_client.get_caller_identity().get('Account')
         cls._storage_handler = DataAPIStorageHandler(table_name="MyItem_dev", primary_key_attribute="id",
                                                      region="eu-west-1",
                                                      delete_mode='HARD', allow_runtime_delete_mode_change=True,
@@ -57,7 +60,7 @@ class RdbmsStorageTests(unittest.TestCase):
                                                      crawler_rolename="glue-role",
                                                      catalog_database='data-api', allow_non_itemmaster_writes=False,
                                                      strict_occv=True,
-                                                     gremlin_address=None, deployed_account=None,
+                                                     gremlin_address=None, deployed_account=account,
                                                      pitr_enabled=None, kms_key_arn=None,
                                                      schema_validation_refresh_hitcount=None,
                                                      extended_config=extended_config,
@@ -152,7 +155,7 @@ class RdbmsStorageTests(unittest.TestCase):
         # get the item back
         item = self._storage_handler.get(id=self._item_id)
 
-        self.assertEqual(item.get("attr1"), v1)
+        self.assertEqual(item[0].get("attr1"), v1)
 
 
 if __name__ == '__main__':

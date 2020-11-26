@@ -14,6 +14,7 @@ import chalicelib.parameters as params
 _sts_client = None
 _iam_client = None
 import chalicelib.exceptions as exceptions
+from logging import Logger
 
 
 def setup_logging(set_name: str = None):
@@ -349,6 +350,7 @@ def get_encrypted_parameter(parameter_name, region):
 
 
 def verify_crawler(table_name, crawler_rolename, catalog_db, datasource_type: str = params.DEFAULT_STORAGE_HANDLER,
+                   deployed_account: str = None, logger: Logger = None,
                    **kwargs):
     glue_client = _get_glue_client()
     crawler_description = f'Crawler for AWS Data API Table {table_name}'
@@ -377,32 +379,46 @@ def verify_crawler(table_name, crawler_rolename, catalog_db, datasource_type: st
         elif datasource_type == params.RDS_PG_STORAGE_HANDLER:
             database_name = kwargs.get(params.CLUSTER_ADDRESS).split('.')[0]
             extended_config = kwargs.get(params.EXTENDED_CONFIG)
+
+            if extended_config is None:
+                raise exceptions.InvalidArgumentsException("Cannot create RDS Crawler without Extended Configuration")
+            if deployed_account is None:
+                raise exceptions.InvalidArgumentsException(
+                    "Cannot create RDS Crawler without Deployment Account Information")
+
             connection_name = f"{params.AWS_DATA_API_SHORTNAME}.{database_name}"
             _pwd = get_encrypted_parameter(parameter_name=kwargs.get(params.DB_USERNAME_PSTORE_ARN),
                                            region=get_region())
 
-            # create a connection
-            conn_args = {
-                'Name': connection_name,
-                'Description': f"{params.AWS_DATA_API_NAME} - {database_name}",
-                'ConnectionType': 'JDBC',
-                'ConnectionProperties': {
-                    'JDBC URL': f'jdbc:postgresql://{kwargs.get(params.CLUSTER_ADDRESS)}:{kwargs.get(params.CLUSTER_PORT)}/{kwargs.get(params.DB_NAME)}',
-                    'Username': kwargs.get(params.DB_USERNAME),
-                    'Password': _pwd
-                },
-                'PhysicalConnectionRequirements': {
-                    'SubnetId': extended_config.get('subnet_ids')[0],
-                    'SecurityGroupIdList': extended_config.get('security_group_ids')
-                }
-            }
             try:
+                # create a connection
+                conn_args = {
+                    'Name': connection_name,
+                    'Description': f"{params.AWS_DATA_API_NAME} - {database_name}",
+                    'ConnectionType': 'JDBC',
+                    'ConnectionProperties': {
+                        'JDBC_CONNECTION_URL': f'jdbc:postgresql://{kwargs.get(params.CLUSTER_ADDRESS)}:{kwargs.get(params.CLUSTER_PORT)}/{kwargs.get(params.DB_NAME)}',
+                        'USERNAME': kwargs.get(params.DB_USERNAME),
+                        'PASSWORD': _pwd
+                    },
+                    'PhysicalConnectionRequirements': {
+                        'SubnetId': extended_config.get('subnet_ids')[0],
+                        'SecurityGroupIdList': extended_config.get('security_group_ids')
+                    }
+                }
+
                 glue_client.create_connection(
-                    CatalogId=catalog_db,
+                    CatalogId=deployed_account,
                     ConnectionInput=conn_args
                 )
-                # create a crawler
-                crawler_args = {"Name": table_name,
+                logger.info(f"Created new Connection {connection_name}")
+            except glue_client.exceptions.AlreadyExistsException:
+                pass
+
+            # create a crawler
+            try:
+                crawler_name = f"{database_name}-{table_name}"
+                crawler_args = {"Name": crawler_name,
                                 "Role": crawler_rolename,
                                 "DatabaseName": catalog_db,
                                 "Description": crawler_description,
@@ -423,9 +439,9 @@ def verify_crawler(table_name, crawler_rolename, catalog_db, datasource_type: st
                 glue_client.create_crawler(
                     **crawler_args
                 )
-            except glue_client.exceptions.AccessDeniedException as ade:
-                print(ade)
-                raise ade
+                logger.info(f"Created new Glue Crawler {crawler_name}")
+            except glue_client.exceptions.AlreadyExistsException:
+                pass
 
 
 def pivot_resultset_into_json(rows: list, column_spec: list) -> list:

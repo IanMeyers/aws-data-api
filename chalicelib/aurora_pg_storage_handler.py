@@ -148,13 +148,13 @@ class DataAPIStorageHandler:
             params.DB_USERNAME_PSTORE_ARN: self._cluster_pstore
         }
         # interface uses kwargs as this method supports both dynamo and rds based crawlers
-        try:
-            utils.verify_crawler(table_name=table_ref, crawler_rolename=self._crawler_rolename,
-                                 catalog_db=self._catalog_database,
-                                 datasource_type=params.RDS_PG_STORAGE_HANDLER,
-                                 **args)
-        except Exception as e:
-            self._logger.error(e)
+        utils.verify_crawler(table_name=table_ref, crawler_rolename=self._crawler_rolename,
+                             catalog_db=self._catalog_database,
+                             datasource_type=params.RDS_PG_STORAGE_HANDLER,
+                             deployed_account=self._deployed_account,
+                             region=self._region,
+                             logger = self._logger,
+                             **args)
 
     def _verify_table(self, table_ref: str, table_schema: dict) -> None:
         try:
