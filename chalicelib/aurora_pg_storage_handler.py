@@ -65,20 +65,25 @@ class DataAPIStorageHandler:
         multiple records, use underlying cursor directly.
         '''
         cursor = self._db_conn.cursor()
-        output = []
+        counts = []
+        rows = []
 
         def _add_output():
             try:
-                rows = cursor.fetchall()
-                if rows is not None and rows != ():
-                    output.append(rows[0])
+                counts.append(cursor.rowcount)
+                r = cursor.fetchall()
+
+                if r is not None and r != ():
+                    rows.append(r[0])
                 else:
-                    output.append(None)
+                    rows.append(None)
             except ProgrammingError as e:
                 if 'no result set' in str(e):
-                    output.append(None)
+                    counts.append(0)
+                    rows.append(None)
                 else:
-                    output.append(e)
+                    counts.append(0)
+                    rows.append(e)
 
         for c in commands:
             if c is not None:
@@ -99,11 +104,13 @@ class DataAPIStorageHandler:
                     # cowardly bail on errors
                     self._db_conn.rollback()
                     print(traceback.format_exc())
-                    output.append(e)
+                    counts.append(0)
+                    rows.append(e)
             else:
-                output.append(None)
+                counts.append(0)
+                rows.append(None)
 
-        return output
+        return counts, rows
 
     def _get_pg_conn(self, pwd: str):
         pid = str(os.getpid())
@@ -194,7 +201,7 @@ class DataAPIStorageHandler:
         index_name = f"{table_ref}_{column_name}"
         statement = f"create index {index_name} on {table_ref} ({column_name})"
 
-        ok = self._run_commands([statement])
+        self._run_commands([statement])
 
         self._logger.info(f"Created new Index {index_name}")
 
@@ -203,7 +210,7 @@ class DataAPIStorageHandler:
             for i in indexes:
                 sql = self._get_sql("VerifyIndexOnColumn") % (table_ref, i)
 
-                index_exists = self._run_commands([sql])
+                counts, index_exists = self._run_commands([sql])
 
                 if index_exists[0] == () or index_exists[0] is None:
                     self._create_index(table_ref, i)
@@ -381,9 +388,10 @@ class DataAPIStorageHandler:
     def check(self, id: str) -> bool:
         statement = f"select count(9) from {self._resource_table_name} where {self._pk_name} = '{id}' and {_who_col_map.get(params.DELETED)} = FALSE"
 
-        found = self._run_commands([statement])[0]
+        counts, rows = self._run_commands([statement])
 
-        if found is not None and found != () and found[0] != 0:
+        record = rows[0]
+        if record is not None and record != () and record[0] != 0:
             return True
         else:
             return False
@@ -397,9 +405,9 @@ class DataAPIStorageHandler:
     def get(self, id: str):
         columns = list(self._resource_schema.get("properties").keys())
         statement = f"select {','.join(columns)} from {self._resource_table_name} where {self._pk_name} = '{id}' and {_who_col_map.get(params.DELETED)} = FALSE"
-        output = self._run_commands([statement])
+        counts, records = self._run_commands([statement])
 
-        return utils.pivot_resultset_into_json(output, columns)
+        return utils.pivot_resultset_into_json(records, columns)
 
     def get_metadata(self, id: str):
         columns = list(self._metadata_schema.get("properties").keys())
@@ -407,9 +415,9 @@ class DataAPIStorageHandler:
 
         # implement delete check by joining to the resource table on the primary key
         statement = f"select {','.join(columns)} from {self._metadata_table_name} a, {self._resource_table_name} b where a.{self._pk_name} = '{id}' and a.{self._pk_name} = b.{self._pk_name} and b.{_who_col_map.get(params.DELETED)} = FALSE"
-        output = self._run_commands([statement])
+        counts, records = self._run_commands([statement])
 
-        return utils.pivot_resultset_into_json(output, columns)
+        return utils.pivot_resultset_into_json(records, columns)
 
     def _create_restore_statement(self, id: str, caller_identity: str):
         return self._create_update_statement(table_ref=self._resource_table_name, pk_name=self._pk_name,
@@ -419,7 +427,9 @@ class DataAPIStorageHandler:
 
     def restore(self, id: str, caller_identity: str):
         restore = self._create_restore_statement(id, caller_identity)
-        self._run_commands([restore])
+        counts, rows = self._run_commands([restore])
+
+        return True if counts is not None and counts[0] > 0 else False
 
     def delete(id: str, caller_identity: str, **kwargs):
         pass
@@ -440,16 +450,16 @@ class DataAPIStorageHandler:
             update = self._create_update_statement(table_ref=self._resource_table_name, pk_name=self._pk_name,
                                                    input=resource,
                                                    item_id=id, caller_identity=caller_identity)
-            output = self._run_commands([update])
+            counts, records = self._run_commands([update])
 
-            if output[0] is None:
+            if counts[0] == 0:
                 # update statement didn't work, so insert the value
                 insert = self._create_insert_statement(table_ref=self._resource_table_name, pk_name=self._pk_name,
                                                        pk_value=id, input=resource, caller_identity=caller_identity)
 
-                output = self._run_commands([insert])
+                counts, records = self._run_commands([insert])
 
-                if len(output) == 0 or output[0] is None:
+                if counts[0] == 1:
                     response[params.RESOURCE] = {
                         params.DATA_MODIFIED: True
                     }

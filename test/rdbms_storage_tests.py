@@ -14,6 +14,15 @@ import json
 import uuid
 import boto3
 
+_v1 = '12345'
+_v2 = 'abc'
+_item = {
+    params.RESOURCE: {
+        "attr1": _v1,
+        "attr2": _v2
+    }
+}
+
 
 class RdbmsStorageTests(unittest.TestCase):
     '''
@@ -139,16 +148,8 @@ class RdbmsStorageTests(unittest.TestCase):
         self.assertFalse(found)
 
     def test_update_item(self):
-        v1 = '12345'
-        v2 = 'abc'
-        item = {
-            params.RESOURCE: {
-                "attr1": v1,
-                "attr2": v2
-            }
-        }
         update_response = self._storage_handler.update_item(id=self._item_id, caller_identity=self._caller_identity,
-                                                            **item)
+                                                            **_item)
         self.assertTrue(update_response.get(params.RESOURCE).get(params.DATA_MODIFIED))
 
         # check that the item exists
@@ -156,22 +157,14 @@ class RdbmsStorageTests(unittest.TestCase):
         self.assertTrue(item)
 
     def test_get_item(self):
-        v1 = '12345'
-        v2 = 'abc'
-        item = {
-            params.RESOURCE: {
-                "attr1": v1,
-                "attr2": v2
-            }
-        }
         update_response = self._storage_handler.update_item(id=self._item_id, caller_identity=self._caller_identity,
-                                                            **item)
+                                                            **_item)
         self.assertTrue(update_response.get(params.RESOURCE).get(params.DATA_MODIFIED))
 
         # get the item back
         item = self._storage_handler.get(id=self._item_id)
 
-        self.assertEqual(item[0].get("attr1"), v1)
+        self.assertEqual(item[0].get("attr1"), _v1)
 
     def test_restore_statement(self):
         restore = self._storage_handler._create_restore_statement(id=self._item_id,
