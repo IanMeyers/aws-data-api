@@ -434,6 +434,30 @@ class DataAPIStorageHandler:
     def delete(id: str, caller_identity: str, **kwargs):
         pass
 
+    def _execute_merge(self, table_ref: str, pk_name: str, id: str, caller_identity, **kwargs):
+        update = self._create_update_statement(table_ref=table_ref, pk_name=pk_name,
+                                               input=kwargs,
+                                               item_id=id, caller_identity=caller_identity)
+        counts, records = self._run_commands([update])
+
+        if counts[0] == 0:
+            # update statement didn't work, so insert the value
+            insert = self._create_insert_statement(table_ref=table_ref, pk_name=pk_name,
+                                                   pk_value=id, input=kwargs, caller_identity=caller_identity)
+
+            counts, records = self._run_commands([insert])
+
+            if counts[0] == 1:
+                return {
+                    params.DATA_MODIFIED: True
+                }
+            else:
+                raise exceptions.DetailedException("Unable to insert or update Resource")
+        else:
+            return {
+                params.DATA_MODIFIED: True
+            }
+
     def update_item(self, id: str, caller_identity: str, **kwargs) -> bool:
         ''' Method ot merge an item into the table. We will first attempt to update an existing item, and when that
         fails we will insert a new item
@@ -445,30 +469,17 @@ class DataAPIStorageHandler:
         '''
         response = {}
 
+        if params.METADATA is kwargs:
+            metadata = kwargs.get(params.METADATA)
+            response[params.METADATA] = self._execute_merge(table_ref=self._metadata_table_name, id=id,
+                                                            pk_name=self._pk_name,
+                                                            caller_identity=caller_identity, **metadata)
+
         if params.RESOURCE in kwargs:
             resource = kwargs.get(params.RESOURCE)
-            update = self._create_update_statement(table_ref=self._resource_table_name, pk_name=self._pk_name,
-                                                   input=resource,
-                                                   item_id=id, caller_identity=caller_identity)
-            counts, records = self._run_commands([update])
-
-            if counts[0] == 0:
-                # update statement didn't work, so insert the value
-                insert = self._create_insert_statement(table_ref=self._resource_table_name, pk_name=self._pk_name,
-                                                       pk_value=id, input=resource, caller_identity=caller_identity)
-
-                counts, records = self._run_commands([insert])
-
-                if counts[0] == 1:
-                    response[params.RESOURCE] = {
-                        params.DATA_MODIFIED: True
-                    }
-                else:
-                    raise exceptions.DetailedException("Unable to insert or update Resource")
-            else:
-                response[params.RESOURCE] = {
-                    params.DATA_MODIFIED: True
-                }
+            response[params.RESOURCE] = self._execute_merge(table_ref=self._resource_table_name, id=id,
+                                                            pk_name=self._pk_name,
+                                                            caller_identity=caller_identity, **resource)
 
         return response
 
