@@ -152,7 +152,7 @@ class DataAPIStorageHandler:
 
         self._run_commands([statement])
 
-        self._logger.info(f"Created new Database Table {table_ref}")
+        self._logger.info(f"Created new Table {table_ref}")
 
         return True
 
@@ -402,7 +402,14 @@ class DataAPIStorageHandler:
         return utils.pivot_resultset_into_json(output, columns)
 
     def get_metadata(self, id: str):
-        pass
+        columns = list(self._metadata_schema.get("properties").keys())
+        columns = [f"a.{x}" for x in columns]
+
+        # implement delete check by joining to the resource table on the primary key
+        statement = f"select {','.join(columns)} from {self._metadata_table_name} a, {self._resource_table_name} b where a.{self._pk_name} = '{id}' and a.{self._pk_name} = b.{self._pk_name} and b.{_who_col_map.get(params.DELETED)} = FALSE"
+        output = self._run_commands([statement])
+
+        return utils.pivot_resultset_into_json(output, columns)
 
     def _create_restore_statement(self, id: str, caller_identity: str):
         return self._create_update_statement(table_ref=self._resource_table_name, pk_name=self._pk_name,
@@ -426,23 +433,34 @@ class DataAPIStorageHandler:
         :param kwargs:
         :return:
         '''
-        update = self._create_update_statement(table_ref=self._resource_table_name, pk_name=self._pk_name, input=kwargs,
-                                               item_id=id, caller_identity=caller_identity)
-        output = self._run_commands([update])
+        response = {}
 
-        if output[0] is None:
-            # update statement didn't work, so insert the value
-            insert = self._create_insert_statement(table_ref=self._resource_table_name, pk_name=self._pk_name,
-                                                   pk_value=id, input=kwargs, caller_identity=caller_identity)
+        if params.RESOURCE in kwargs:
+            resource = kwargs.get(params.RESOURCE)
+            update = self._create_update_statement(table_ref=self._resource_table_name, pk_name=self._pk_name,
+                                                   input=resource,
+                                                   item_id=id, caller_identity=caller_identity)
+            output = self._run_commands([update])
 
-            output = self._run_commands([insert])
+            if output[0] is None:
+                # update statement didn't work, so insert the value
+                insert = self._create_insert_statement(table_ref=self._resource_table_name, pk_name=self._pk_name,
+                                                       pk_value=id, input=resource, caller_identity=caller_identity)
 
-            if len(output) == 0 or output[0] is None:
-                return True
+                output = self._run_commands([insert])
+
+                if len(output) == 0 or output[0] is None:
+                    response[params.RESOURCE] = {
+                        params.DATA_MODIFIED: True
+                    }
+                else:
+                    raise exceptions.DetailedException("Unable to insert or update Resource")
             else:
-                raise exceptions.DetailedException("Unable to insert or update Resource")
-        else:
-            return True
+                response[params.RESOURCE] = {
+                    params.DATA_MODIFIED: True
+                }
+
+        return response
 
     def drop_table(self, table_name: str, do_export: bool):
         pass

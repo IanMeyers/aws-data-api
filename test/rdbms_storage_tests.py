@@ -16,6 +16,10 @@ import boto3
 
 
 class RdbmsStorageTests(unittest.TestCase):
+    '''
+    Tests for the aurora_pg_storage_handler implementation of a Data API Back End. This includes both direct interface
+    tests as well as internal checks against private generator methods
+    '''
     _cluster_address = os.environ[params.CLUSTER_ADDRESS]
     _cluster_port = 5432
     _cluster_db = 'postgres'
@@ -138,12 +142,14 @@ class RdbmsStorageTests(unittest.TestCase):
         v1 = '12345'
         v2 = 'abc'
         item = {
-            "attr1": v1,
-            "attr2": v2
+            params.RESOURCE: {
+                "attr1": v1,
+                "attr2": v2
+            }
         }
         update_response = self._storage_handler.update_item(id=self._item_id, caller_identity=self._caller_identity,
                                                             **item)
-        self.assertTrue(update_response)
+        self.assertTrue(update_response.get(params.RESOURCE).get(params.DATA_MODIFIED))
 
         # check that the item exists
         item = self._storage_handler.check(id=self._item_id)
@@ -153,12 +159,14 @@ class RdbmsStorageTests(unittest.TestCase):
         v1 = '12345'
         v2 = 'abc'
         item = {
-            "attr1": v1,
-            "attr2": v2
+            params.RESOURCE: {
+                "attr1": v1,
+                "attr2": v2
+            }
         }
         update_response = self._storage_handler.update_item(id=self._item_id, caller_identity=self._caller_identity,
                                                             **item)
-        self.assertTrue(update_response)
+        self.assertTrue(update_response.get(params.RESOURCE).get(params.DATA_MODIFIED))
 
         # get the item back
         item = self._storage_handler.get(id=self._item_id)

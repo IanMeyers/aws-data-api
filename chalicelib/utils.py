@@ -457,10 +457,11 @@ def pivot_resultset_into_json(rows: list, column_spec: list) -> list:
     output = []
 
     for r in rows:
-        obj = {}
-        for i, c in enumerate(column_spec):
-            obj[c] = r[i]
-        output.append(obj)
+        if r is not None:
+            obj = {}
+            for i, c in enumerate(column_spec):
+                obj[c] = r[i]
+            output.append(obj)
 
     return output
 
