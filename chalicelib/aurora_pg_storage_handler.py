@@ -402,21 +402,34 @@ class DataAPIStorageHandler:
     def get_usage(self, table_name: str):
         pass
 
-    def get(self, id: str, suppress_meta_fetch: bool = False, only_attributes: list = None,
-            not_attributes: list = None):
+    def get_resource(self, id: str, only_attributes: list = None, not_attributes: list = None):
         schema = self._resource_schema.get("properties")
-        columns = list(schema.keys())
+
+        # only add the attributes needed, or the schema keys
+        if only_attributes is None:
+            columns = list(schema.keys())
+        else:
+            columns = only_attributes
+
+        # remove the not attributes
+        if not_attributes is not None:
+            for n in not_attributes:
+                del columns[n]
+
         statement = f"select {','.join(columns)} from {self._resource_table_name} where {self._pk_name} = '{id}' and {_who_col_map.get(params.DELETED)} = FALSE"
         counts, records = self._run_commands([statement])
 
-        output = {}
-
         if records is not None and len(records) == 1:
-            output[params.RESOURCE] = utils.pivot_resultset_into_json(records, columns, schema)
+            return utils.pivot_resultset_into_json(records, columns, schema)
         elif records is not None and len(records) > 1:
-            return exceptions.DetailedException("O(1) lookup of Resource returned multiple rows")
+            raise exceptions.DetailedException("O(1) lookup of Resource returned multiple rows")
         elif records is None:
             raise exceptions.ResourceNotFoundException()
+
+    def get(self, id: str, suppress_meta_fetch: bool = False, only_attributes: list = None,
+            not_attributes: list = None):
+        output = {}
+        output[params.RESOURCE] = self.get_resource(id, only_attributes, not_attributes)
 
         if suppress_meta_fetch is False:
             output[params.METADATA] = self.get_metadata(id=id)
@@ -435,7 +448,7 @@ class DataAPIStorageHandler:
         if records is not None and len(records) == 1:
             return utils.pivot_resultset_into_json(records, columns, schema)
         elif records is not None and len(records) > 1:
-            return exceptions.DetailedException("O(1) lookup of Metadata returned multiple rows")
+            raise exceptions.DetailedException("O(1) lookup of Metadata returned multiple rows")
         elif records is None:
             raise exceptions.ResourceNotFoundException()
 
