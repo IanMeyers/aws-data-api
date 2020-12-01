@@ -154,11 +154,11 @@ class RdbmsStorageTests(unittest.TestCase):
         self.assertEqual(insert,
                          f"insert into mytable (id,a,b,c,d,item_version,last_update_action,last_update_date,last_updated_by) values ('{self._item_id}','12345',999,0,1,0,'create',CURRENT_DATE,'{self._caller_identity}')")
 
-    def test_check(self):
+    def test_check_false(self):
         found = self._storage_handler.check("xyz")
         self.assertFalse(found)
 
-    def test_put_resource(self):
+    def test_put_check_resource(self):
         update_response = self._storage_handler.update_item(id=self._item_id, caller_identity=self._caller_identity,
                                                             **_test_resource)
         self.assertTrue(update_response.get(params.RESOURCE).get(params.DATA_MODIFIED))
@@ -167,10 +167,17 @@ class RdbmsStorageTests(unittest.TestCase):
         item = self._storage_handler.check(id=self._item_id)
         self.assertTrue(item)
 
-    def test_put_metadata(self):
+    def test_put_get_metadata(self):
         update_response = self._storage_handler.update_item(id=self._item_id, caller_identity=self._caller_identity,
                                                             **_test_metadata)
         self.assertTrue(update_response.get(params.METADATA).get(params.DATA_MODIFIED))
+
+        meta = self._storage_handler.get_metadata(id=self._item_id)
+        self.assertIsNotNone(meta)
+        meta = meta[0]
+        self.assertEqual(meta.get("meta1"), _meta_attr1)
+        self.assertEqual(meta.get("meta2"), _meta_attr2)
+        self.assertEqual(meta.get("meta3"), _meta_attr3)
 
     def test_get_item(self):
         update_response = self._storage_handler.update_item(id=self._item_id, caller_identity=self._caller_identity,
@@ -178,7 +185,7 @@ class RdbmsStorageTests(unittest.TestCase):
         self.assertTrue(update_response.get(params.RESOURCE).get(params.DATA_MODIFIED))
 
         # get the item back
-        item = self._storage_handler.get(id=self._item_id)
+        item = self._storage_handler.get(id=self._item_id).get(params.RESOURCE)
 
         self.assertEqual(item[0].get("attr1"), _resource_attr1)
 
