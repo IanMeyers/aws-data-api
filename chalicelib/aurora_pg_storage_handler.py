@@ -32,7 +32,6 @@ class DataAPIStorageHandler:
     _allow_runtime_delete_mode_change = False
     _table_indexes = []
     _meta_indexes = []
-    _schema_loaded = False
     _resource_schema = None
     _schema_validator = None
     _schema_validation_refresh_hitcount = None
@@ -110,6 +109,7 @@ class DataAPIStorageHandler:
                 counts.append(0)
                 rows.append(None)
 
+        cursor.close()
         return counts, rows
 
     def _get_pg_conn(self, pwd: str):
@@ -469,7 +469,7 @@ class DataAPIStorageHandler:
         '''
         response = {}
 
-        if params.METADATA is kwargs:
+        if params.METADATA in kwargs:
             metadata = kwargs.get(params.METADATA)
             response[params.METADATA] = self._execute_merge(table_ref=self._metadata_table_name, id=id,
                                                             pk_name=self._pk_name,

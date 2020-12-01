@@ -14,12 +14,23 @@ import json
 import uuid
 import boto3
 
-_v1 = '12345'
-_v2 = 'abc'
-_item = {
+_resource_attr1 = '12345'
+_resource_attr2 = 'abc'
+_meta_attr1 = _resource_attr1
+_meta_attr2 = 9876
+_meta_attr3 = True
+_test_resource = {
     params.RESOURCE: {
-        "attr1": _v1,
-        "attr2": _v2
+        "attr1": _resource_attr1,
+        "attr2": _resource_attr2
+    }
+}
+
+_test_metadata = {
+    params.METADATA: {
+        "meta1": _meta_attr1,
+        "meta2": _meta_attr2,
+        "meta3": _meta_attr3
     }
 }
 
@@ -147,24 +158,29 @@ class RdbmsStorageTests(unittest.TestCase):
         found = self._storage_handler.check("xyz")
         self.assertFalse(found)
 
-    def test_update_item(self):
+    def test_put_resource(self):
         update_response = self._storage_handler.update_item(id=self._item_id, caller_identity=self._caller_identity,
-                                                            **_item)
+                                                            **_test_resource)
         self.assertTrue(update_response.get(params.RESOURCE).get(params.DATA_MODIFIED))
 
         # check that the item exists
         item = self._storage_handler.check(id=self._item_id)
         self.assertTrue(item)
 
+    def test_put_metadata(self):
+        update_response = self._storage_handler.update_item(id=self._item_id, caller_identity=self._caller_identity,
+                                                            **_test_metadata)
+        self.assertTrue(update_response.get(params.METADATA).get(params.DATA_MODIFIED))
+
     def test_get_item(self):
         update_response = self._storage_handler.update_item(id=self._item_id, caller_identity=self._caller_identity,
-                                                            **_item)
+                                                            **_test_resource)
         self.assertTrue(update_response.get(params.RESOURCE).get(params.DATA_MODIFIED))
 
         # get the item back
         item = self._storage_handler.get(id=self._item_id)
 
-        self.assertEqual(item[0].get("attr1"), _v1)
+        self.assertEqual(item[0].get("attr1"), _resource_attr1)
 
     def test_restore_statement(self):
         restore = self._storage_handler._create_restore_statement(id=self._item_id,
