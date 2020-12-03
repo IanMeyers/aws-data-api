@@ -124,3 +124,9 @@ class ApiMetadata:
 
         return self._dynamo_helper.control_table_delete(control_hash=table_name, control_sort=metadata_type,
                                                         caller_identity=caller_identity)
+
+    def get_deployed_account(self, table_name: str, stage: str):
+        # get the deployed account from metadata
+        deployed_account = self.get_api_metadata(api_name=table_name, stage=stage, attribute_filters='DeployedAccount')
+
+        return deployed_account

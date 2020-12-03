@@ -453,7 +453,7 @@ def verify_crawler(table_name, crawler_rolename, catalog_db, datasource_type: st
                 pass
 
 
-def pivot_resultset_into_json(rows: list, column_spec: list, schema: dict = None) -> list:
+def pivot_resultset_into_json(rows: list, column_spec: list, type_map: dict = None) -> list:
     output = []
 
     for r in rows:
@@ -461,17 +461,19 @@ def pivot_resultset_into_json(rows: list, column_spec: list, schema: dict = None
             obj = {}
             for i, c in enumerate(column_spec):
                 # skip null responses
-                if r[i] is not None and (type(r[i]) == str and r[i].lower() != 'null') or type(r[i] != str):
-                    if schema is not None:
-                        # get the type for this column from the schema
-                        data_type = schema.get(c).get("type")
-
-                        if data_type == 'boolean':
+                if r[i] is None:
+                    pass
+                else:
+                    # special handling for found types including boolean (returned as '0' or '1') and datetime
+                    if type(r[i]) == str:
+                        if r[i].lower() != 'null' and type_map.get(c) == 'boolean':
                             obj[c] = strtobool(r[i])
+                    elif type(r[i]) == datetime.datetime:
+                        obj[c] = r[i].strftime(params.DEFAULT_DATE_FORMAT)
 
-                    # no special handling or null schema, so set the object value to the returned type
-                    if c not in obj:
-                        obj[c] = r[i]
+                # no special handling or null schema, so set the object value to the returned type
+                if c not in obj:
+                    obj[c] = r[i]
             output.append(obj)
 
     return output

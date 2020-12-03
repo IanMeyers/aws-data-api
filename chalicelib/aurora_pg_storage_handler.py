@@ -10,14 +10,27 @@ import ssl
 import socket
 import traceback
 import json
+import datetime
 
 _who_col_map = {
     params.ITEM_VERSION: "item_version",
     params.LAST_UPDATE_ACTION: "last_update_action",
     params.LAST_UPDATE_DATE: "last_update_date",
     params.LAST_UPDATED_BY: "last_updated_by",
-    params.DELETED: "deleted"
+    params.DELETED: "deleted",
+    params.ITEM_MASTER_ID: "item_master_id"
 }
+
+_who_type_map = {
+    params.ITEM_VERSION: 'integer',
+    params.LAST_UPDATE_ACTION: 'string',
+    params.LAST_UPDATE_DATE: 'datetime',
+    params.LAST_UPDATED_BY: 'string',
+    params.DELETED: 'boolean',
+    params.ITEM_MASTER_ID: 'string'
+}
+
+_who_invert = {v: k for k, v in _who_col_map.items()}
 
 
 class DataAPIStorageHandler:
@@ -137,9 +150,10 @@ class DataAPIStorageHandler:
         return [
             f"{_who_col_map.get(params.ITEM_VERSION)} int not null default 1",
             f"{_who_col_map.get(params.LAST_UPDATE_ACTION)} varchar(15) null",
-            f"{_who_col_map.get(params.LAST_UPDATE_DATE)} date not null",
+            f"{_who_col_map.get(params.LAST_UPDATE_DATE)} timestamp with time zone not null",
             f"{_who_col_map.get(params.LAST_UPDATED_BY)} varchar(60) not null",
-            f"{_who_col_map.get(params.DELETED)} boolean not null default FALSE"
+            f"{_who_col_map.get(params.DELETED)} boolean not null default FALSE",
+            f"{_who_col_map.get(params.ITEM_MASTER_ID)} varchar null"
         ]
 
     def _create_table_from_schema(self, table_ref: str, table_schema: dict) -> bool:
@@ -231,7 +245,7 @@ class DataAPIStorageHandler:
     def _who_column_update(self, caller_identity: str, version_increment: bool = True):
         clauses = [
             f"{_who_col_map.get(params.LAST_UPDATE_ACTION)} = '{params.ACTION_UPDATE}'",
-            f"{_who_col_map.get(params.LAST_UPDATE_DATE)} = CURRENT_DATE",
+            f"{_who_col_map.get(params.LAST_UPDATE_DATE)} = CURRENT_TIMESTAMP",
             f"{_who_col_map.get(params.LAST_UPDATED_BY)} = '{caller_identity}'"
         ]
 
@@ -252,7 +266,7 @@ class DataAPIStorageHandler:
         return [
             f"0",
             f"'{params.ACTION_CREATE}'",
-            f"CURRENT_DATE",
+            f"CURRENT_TIMESTAMP",
             f"'{caller_identity}'"
         ]
 
@@ -286,13 +300,6 @@ class DataAPIStorageHandler:
 
         return statement
 
-    def _generate_keylist_for_obj(self, schema, pk_name):
-        keys = [pk_name]
-        for k in schema.keys():
-            keys.append(k)
-
-        return keys
-
     def _synthesize_insert(self, pk_name: str, pk_value: str, input: dict, caller_identity) -> tuple:
         '''Generate a valid list of insert clauses from an input dict. For example:
 
@@ -301,13 +308,14 @@ class DataAPIStorageHandler:
         :param input:
         :return:
         '''
-        columns = self._generate_keylist_for_obj(schema=input, pk_name=pk_name)
-        columns.extend(self._who_column_list())
+        columns = [pk_name]
+        columns.extend(list(input.keys()))
 
         values = [self._extract_type(pk_value)]
         for k in input.keys():
             values.append(self._extract_type(input.get(k)))
 
+        columns.extend(self._who_column_list())
         values.extend(self._who_column_insert(caller_identity=caller_identity))
 
         return columns, values
@@ -397,6 +405,8 @@ class DataAPIStorageHandler:
             return False
 
     def list_items(self, **kwargs):
+        limit = kwargs.get(params.QUERY_PARAM_LIMIT)
+
         pass
 
     def get_usage(self, table_name: str):
@@ -426,27 +436,64 @@ class DataAPIStorageHandler:
         elif records is None:
             raise exceptions.ResourceNotFoundException()
 
+    def _generate_column_list(self, base_columns: list, prefix: str = None) -> dict:
+        '''
+        for a given list of base columns, return these columns plus the who columns. data is returned as a dict where
+        keys is the requested columns and values are the prefixed sql columns (which may be the same)
+        '''
+        columns = base_columns
+
+        # add the named who columns to be returned
+        columns.extend(list(_who_col_map.keys()))
+
+        out = {}
+
+        def _resolve_who(value):
+            if value in _who_col_map:
+                return _who_col_map.get(value)
+            else:
+                return value
+
+        # add the prefix to sql columns
+        for c in columns:
+            if prefix is not None:
+                out[c] = "{prefix}.{alias} as {alias}".format(prefix=prefix, alias=_resolve_who(c))
+            else:
+                out[c] = _resolve_who(c)
+
+        return out
+
     def get(self, id: str, suppress_meta_fetch: bool = False, only_attributes: list = None,
             not_attributes: list = None):
-        output = {}
-        output[params.RESOURCE] = self.get_resource(id, only_attributes, not_attributes)
+        output = {params.RESOURCE: self.get_resource(id, only_attributes, not_attributes)}
 
         if suppress_meta_fetch is False:
-            output[params.METADATA] = self.get_metadata(id=id)
+            try:
+                meta = self.get_metadata(id=id)
+            except exceptions.ResourceNotFoundException:
+                pass
+
+            if meta is not None:
+                output[params.METADATA] = meta
 
         return output
 
     def get_metadata(self, id: str):
         schema = self._metadata_schema.get("properties")
-        columns = list(schema.keys())
-        sql_columns = [f"a.{x} as {x}" for x in columns]
+
+        # create the type map for what will be returned
+        type_map = _who_type_map
+        for k, v in schema.items():
+            type_map[k] = v.get("type")
+
+        cols = self._generate_column_list(base_columns=list(schema.keys()), prefix='a')
 
         # implement delete check by joining to the resource table on the primary key
-        statement = f"select {','.join(sql_columns)} from {self._metadata_table_name} a, {self._resource_table_name} b where a.{self._pk_name} = '{id}' and a.{self._pk_name} = b.{self._pk_name} and b.{_who_col_map.get(params.DELETED)} = FALSE"
+        statement = f"select {','.join(cols.values())} from {self._metadata_table_name} a, {self._resource_table_name} b where a.{self._pk_name} = '{id}' and a.{self._pk_name} = b.{self._pk_name} and b.{_who_col_map.get(params.DELETED)} = FALSE"
         counts, records = self._run_commands([statement])
 
-        if records is not None and len(records) == 1:
-            return utils.pivot_resultset_into_json(records, columns, schema)
+        if records is not None and len(records) == 1 and records[0] is not None:
+            return utils.pivot_resultset_into_json(records, list(cols.keys()), type_map)
         elif records is not None and len(records) > 1:
             raise exceptions.DetailedException("O(1) lookup of Metadata returned multiple rows")
         elif records is None:
@@ -464,7 +511,19 @@ class DataAPIStorageHandler:
 
         return True if counts is not None and counts[0] > 0 else False
 
-    def delete(id: str, caller_identity: str, **kwargs):
+    def delete(self, id: str, caller_identity: str, **kwargs):
+        update = self._create_update_statement(table_ref=self._resource_table_name, pk_name=self._pk_name,
+                                               input={_who_col_map.get(params.DELETED): True},
+                                               item_id=id, caller_identity=caller_identity)
+        counts, records = self._run_commands([update])
+
+    def delete_resource(self, id, caller_identity, **kwargs):
+        pass
+
+    def delete_metadata(self, id):
+        pass
+
+    def drop_table(self, table_name, do_export=True):
         pass
 
     def _execute_merge(self, table_ref: str, pk_name: str, id: str, caller_identity, **kwargs):
@@ -516,9 +575,6 @@ class DataAPIStorageHandler:
 
         return response
 
-    def drop_table(self, table_name: str, do_export: bool):
-        pass
-
     def find(self, **kwargs):
         pass
 
@@ -526,6 +582,9 @@ class DataAPIStorageHandler:
         raise exceptions.UnimplementedFeatureException()
 
     def item_master_update(self, caller_identity: str, **kwargs):
+        pass
+
+    def remove_metadata_attributes(self, id, metadata_attributes: list, caller_identity: str):
         pass
 
     def remove_resource_attributes(self, id: str,

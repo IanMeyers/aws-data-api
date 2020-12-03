@@ -119,7 +119,7 @@ class RdbmsStorageTests(unittest.TestCase):
                                                                           caller_identity=self._caller_identity)
 
         self.assertEqual(update_statement,
-                         "update my_table set a = '12345',b = 999,c = 0,d = 1,last_update_action = 'update',last_update_date = CURRENT_DATE,last_updated_by = 'bob',item_version = item_version+1 where id = '123' and deleted = FALSE")
+                         "update my_table set a = '12345',b = 999,c = 0,d = 1,last_update_action = 'update',last_update_date = CURRENT_TIMESTAMP,last_updated_by = 'bob',item_version = item_version+1 where id = '123' and deleted = FALSE")
 
     def test_insert_clause(self):
         input = {
@@ -152,7 +152,7 @@ class RdbmsStorageTests(unittest.TestCase):
                                                                 pk_value=self._item_id, input=input,
                                                                 caller_identity=self._caller_identity)
         self.assertEqual(insert,
-                         f"insert into mytable (id,a,b,c,d,item_version,last_update_action,last_update_date,last_updated_by) values ('{self._item_id}','12345',999,0,1,0,'create',CURRENT_DATE,'{self._caller_identity}')")
+                         f"insert into mytable (id,a,b,c,d,item_version,last_update_action,last_update_date,last_updated_by) values ('{self._item_id}','12345',999,0,1,0,'create',CURRENT_TIMESTAMP,'{self._caller_identity}')")
 
     def test_check_false(self):
         found = self._storage_handler.check("xyz")
@@ -194,7 +194,7 @@ class RdbmsStorageTests(unittest.TestCase):
                                                                   caller_identity=self._caller_identity)
 
         self.assertEqual(restore,
-                         f"update myitem_dev set deleted = 0,last_update_action = 'update',last_update_date = CURRENT_DATE,last_updated_by = '{self._caller_identity}' where id = '{self._item_id}'")
+                         f"update myitem_dev set deleted = 0,last_update_action = 'update',last_update_date = CURRENT_TIMESTAMP,last_updated_by = '{self._caller_identity}' where id = '{self._item_id}'")
 
 
 if __name__ == '__main__':

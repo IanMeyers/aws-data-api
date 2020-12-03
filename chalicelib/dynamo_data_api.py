@@ -1182,12 +1182,3 @@ class DataAPIStorageHandler:
                 }
         except self._dynamo_client.exceptions.ResourceNotFoundException:
             raise ResourceNotFoundException("Invalid Table Name")
-
-    def get_deployed_account(self):
-        # get the deployed account from metadata
-        deployed_account = self._dynamo_utils.get_table_metadata(api_name=self._table_name)['DeployedAccount']
-
-        if self._deployed_account is None:
-            self._deployed_account = deployed_account
-
-        return deployed_account
