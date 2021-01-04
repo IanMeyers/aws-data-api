@@ -354,7 +354,7 @@ class DataAPIStorageHandler:
         if params.OVERRIDE_METADATA_TABLENAME in kwargs:
             self._metadata_table_name = kwargs.get(params.OVERRIDE_METADATA_TABLENAME)
         else:
-            self._metadata_table_name = f"{self._resource_table_name}_{params.METADATA}"
+            self._metadata_table_name = f"{self._resource_table_name}_{params.METADATA}".lower()
 
         self._pk_name = primary_key_attribute
         self._deployed_account = deployed_account

@@ -222,7 +222,20 @@ class RdbmsStorageTests(unittest.TestCase):
         teardown(handler)
 
     def test_item_update(self):
-        pass
+        update_response = self._storage_handler.update_item(id=self._item_id, caller_identity=self._caller_identity,
+                                                            **_test_resource)
+        self.assertTrue(update_response.get(params.RESOURCE).get(params.DATA_MODIFIED))
+
+        # modify the test resource
+        upd = "updated_test_value"
+        _test_resource["attr2"] = upd
+        update_response = self._storage_handler.update_item(id=self._item_id, caller_identity=self._caller_identity,
+                                                            **_test_resource)
+        self.assertTrue(update_response.get(params.RESOURCE).get(params.DATA_MODIFIED))
+
+        # check that the updated worked
+        item = self._storage_handler.get(id=self._item_id)
+        self.assertTrue(item.get(params.RESOURCE)[0].get("attr2"), upd)
 
     def test_meta_update(self):
         pass
