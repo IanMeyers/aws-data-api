@@ -348,14 +348,14 @@ class DataAPIStorageHandler:
 
         # setup foundation properties
         self._region = region
+        self._resource_table_name = table_name.lower()
 
-        # allow override of the target table, enabling existing table data to be used (as a resource only)
-        if params.OVERRIDE_TABLE_NAME in kwargs:
-            self._resource_table_name = kwargs.get(params.OVERRIDE_TABLE_NAME)
+        # allow override of the metadata table name
+        if params.OVERRIDE_METADATA_TABLENAME in kwargs:
+            self._metadata_table_name = kwargs.get(params.OVERRIDE_METADATA_TABLENAME)
         else:
-            self._resource_table_name = table_name.lower()
+            self._metadata_table_name = f"{self._resource_table_name}_{params.METADATA}"
 
-        self._metadata_table_name = f"{self._resource_table_name}_{params.METADATA}"
         self._pk_name = primary_key_attribute
         self._deployed_account = deployed_account
         self._extended_config = extended_config

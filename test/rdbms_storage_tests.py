@@ -71,8 +71,9 @@ class RdbmsStorageTests(unittest.TestCase):
         "security_group_ids": ["sg-26ec6a5e"]
     }
 
-    def create_storage_handler(self, resource_schema: dict, metadata_schema: dict, extended_config: dict,
-                               override_tablename: str = None) -> DataAPIStorageHandler:
+    def create_storage_handler(self, with_name: str, resource_schema: dict, metadata_schema: dict,
+                               extended_config: dict,
+                               override_metaname: str = None) -> DataAPIStorageHandler:
         other_args = {
             params.CLUSTER_ADDRESS: self._cluster_address,
             params.CLUSTER_PORT: self._cluster_port,
@@ -84,12 +85,12 @@ class RdbmsStorageTests(unittest.TestCase):
             params.CONTROL_TYPE_METADATA_SCHEMA: metadata_schema
         }
 
-        if override_tablename is not None:
-            other_args[params.OVERRIDE_TABLE_NAME] = override_tablename
+        if override_metaname is not None:
+            other_args[params.OVERRIDE_METADATA_TABLENAME] = override_metaname
 
         sts_client = boto3.client('sts')
         account = sts_client.get_caller_identity().get('Account')
-        handler = DataAPIStorageHandler(table_name="MyItem_dev", primary_key_attribute="id",
+        handler = DataAPIStorageHandler(table_name=with_name, primary_key_attribute="id",
                                         region="eu-west-1",
                                         delete_mode='HARD', allow_runtime_delete_mode_change=True,
                                         table_indexes=["attr2"], metadata_indexes=None,
@@ -107,7 +108,8 @@ class RdbmsStorageTests(unittest.TestCase):
     def setUpClass(cls) -> None:
         warnings.filterwarnings("ignore", category=ResourceWarning, message="unclosed.*<ssl.SSLSocket.*>")
 
-        cls._storage_handler = cls.create_storage_handler(cls, resource_schema=cls._resource_schema,
+        cls._storage_handler = cls.create_storage_handler(cls, with_name="MyItem_dev",
+                                                          resource_schema=cls._resource_schema,
                                                           metadata_schema=cls._metadata_schema,
                                                           extended_config=cls._extended_config)
 
@@ -207,13 +209,16 @@ class RdbmsStorageTests(unittest.TestCase):
         self.assertEqual(item[0].get("attr1"), _resource_attr1)
 
     def test_bound_to_existing(self):
-        ovr = "test_override_table"
-        handler = self.create_storage_handler(resource_schema=self._resource_schema,
+        resource_ovrr = "test_override_table"
+        metadata_ovrr = "test_override_meta"
+        handler = self.create_storage_handler(with_name=resource_ovrr,
+                                              resource_schema=self._resource_schema,
                                               metadata_schema=self._metadata_schema,
                                               extended_config=self._extended_config,
-                                              override_tablename=ovr)
+                                              override_metaname=metadata_ovrr)
 
-        self.assertEqual(ovr, handler._resource_table_name)
+        self.assertEqual(resource_ovrr, handler._resource_table_name)
+        self.assertEqual(metadata_ovrr, handler._metadata_table_name)
         teardown(handler)
 
     def test_item_update(self):
