@@ -95,6 +95,7 @@ METADATA_TABLE_ARN = 'MetadataTableARN'
 METADATA_STREAM_ARN = 'MetadataStreamARN'
 METADATA_INDEXES = 'MetadataIndexes'
 NON_ITEM_MASTER_WRITES_ALLOWED = 'NonItemMasterWritesAllowed'
+OVERRIDE_TABLE_NAME = 'OverrideTableName'
 PAY_PER_REQUEST = 'PAY_PER_REQUEST'
 PITR_ENABLED = "PointInTimeRecoveryEnabled"
 PRIMARY_KEY = 'PrimaryKey'
