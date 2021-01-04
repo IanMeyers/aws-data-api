@@ -13,12 +13,14 @@ import warnings
 import json
 import uuid
 import boto3
+import copy
 
 _resource_attr1 = '12345'
 _resource_attr2 = 'abc'
 _meta_attr1 = _resource_attr1
 _meta_attr2 = 9876
 _meta_attr3 = True
+
 _test_resource = {
     params.RESOURCE: {
         "attr1": _resource_attr1,
@@ -40,6 +42,11 @@ def teardown(storage_handler) -> None:
         [f"drop table if exists {storage_handler._resource_table_name}",
          f"drop table if exists {storage_handler._metadata_table_name}"])
     storage_handler.disconnect()
+
+
+def remove_metadata(storage_handler, item_id) -> None:
+    cursor = storage_handler._run_commands(
+        [f"delete from {storage_handler._metadata_table_name} where {storage_handler._pk_name} = '{item_id}'"])
 
 
 class RdbmsStorageTests(unittest.TestCase):
@@ -198,6 +205,9 @@ class RdbmsStorageTests(unittest.TestCase):
         self.assertEqual(meta.get("meta2"), _meta_attr2)
         self.assertEqual(meta.get("meta3"), _meta_attr3)
 
+        # cleanup metadata
+        remove_metadata(self._storage_handler, self._item_id)
+
     def test_get_item(self):
         update_response = self._storage_handler.update_item(id=self._item_id, caller_identity=self._caller_identity,
                                                             **_test_resource)
@@ -228,17 +238,34 @@ class RdbmsStorageTests(unittest.TestCase):
 
         # modify the test resource
         upd = "updated_test_value"
-        _test_resource["attr2"] = upd
+        resource = copy.deepcopy(_test_resource)
+        resource["attr2"] = upd
         update_response = self._storage_handler.update_item(id=self._item_id, caller_identity=self._caller_identity,
-                                                            **_test_resource)
+                                                            **resource)
         self.assertTrue(update_response.get(params.RESOURCE).get(params.DATA_MODIFIED))
 
-        # check that the updated worked
+        # check that the update worked
         item = self._storage_handler.get(id=self._item_id)
         self.assertTrue(item.get(params.RESOURCE)[0].get("attr2"), upd)
 
     def test_meta_update(self):
-        pass
+        update_response = self._storage_handler.update_item(id=self._item_id, caller_identity=self._caller_identity,
+                                                            **_test_metadata)
+        self.assertTrue(update_response.get(params.METADATA).get(params.DATA_MODIFIED))
+
+        # modify the test metadata
+        newval = _meta_attr2 + 1
+        meta = copy.deepcopy(_test_metadata)
+        meta[params.METADATA]["meta2"] = newval
+        update_response = self._storage_handler.update_item(id=self._item_id, caller_identity=self._caller_identity,
+                                                            **meta)
+
+        # check that the update worked
+        meta = self._storage_handler.get_metadata(id=self._item_id)
+        self.assertTrue(meta[0].get("meta2"), newval)
+
+        # cleanup metadata
+        remove_metadata(self._storage_handler, self._item_id)
 
     def test_item_delete(self):
         pass
