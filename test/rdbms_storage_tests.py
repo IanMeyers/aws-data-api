@@ -7,8 +7,9 @@ tracemalloc.start()
 
 sys.path.append("../chalicelib")
 
-import parameters as params
-from pg_storage_handler import DataAPIStorageHandler
+import chalicelib.parameters as params
+import chalicelib.exceptions as exceptions
+from chalicelib.pg_storage_handler import DataAPIStorageHandler
 import warnings
 import json
 import uuid
@@ -37,14 +38,14 @@ _test_metadata = {
 }
 
 
-def teardown(storage_handler) -> None:
+def _teardown(storage_handler) -> None:
     cursor = storage_handler._run_commands(
         [f"drop table if exists {storage_handler._resource_table_name}",
          f"drop table if exists {storage_handler._metadata_table_name}"])
     storage_handler.disconnect()
 
 
-def remove_metadata(storage_handler, item_id) -> None:
+def _cleanup_metadata(storage_handler, item_id) -> None:
     cursor = storage_handler._run_commands(
         [f"delete from {storage_handler._metadata_table_name} where {storage_handler._pk_name} = '{item_id}'"])
 
@@ -99,7 +100,7 @@ class RdbmsStorageTests(unittest.TestCase):
         account = sts_client.get_caller_identity().get('Account')
         handler = DataAPIStorageHandler(table_name=with_name, primary_key_attribute="id",
                                         region="eu-west-1",
-                                        delete_mode='HARD', allow_runtime_delete_mode_change=True,
+                                        delete_mode=params.DELETE_MODE_HARD, allow_runtime_delete_mode_change=True,
                                         table_indexes=["attr2"], metadata_indexes=None,
                                         crawler_rolename="DataAPICrawlerRole",
                                         catalog_database='data-api', allow_non_itemmaster_writes=False,
@@ -122,7 +123,7 @@ class RdbmsStorageTests(unittest.TestCase):
 
     @classmethod
     def tearDownClass(cls) -> None:
-        teardown(cls._storage_handler)
+        _teardown(cls._storage_handler)
 
     def test_update_clause(self):
         input = {
@@ -181,8 +182,8 @@ class RdbmsStorageTests(unittest.TestCase):
                          f"insert into mytable (id,a,b,c,d,item_version,last_update_action,last_update_date,last_updated_by) values ('{self._item_id}','12345',999,0,1,0,'create',CURRENT_TIMESTAMP,'{self._caller_identity}')")
 
     def test_check_no_object(self):
-        found = self._storage_handler.check("xyz")
-        self.assertFalse(found)
+        with self.assertRaises(exceptions.ResourceNotFoundException):
+            self._storage_handler.check("xyz")
 
     def test_put_check_resource(self):
         update_response = self._storage_handler.update_item(id=self._item_id, caller_identity=self._caller_identity,
@@ -206,7 +207,7 @@ class RdbmsStorageTests(unittest.TestCase):
         self.assertEqual(meta.get("meta3"), _meta_attr3)
 
         # cleanup metadata
-        remove_metadata(self._storage_handler, self._item_id)
+        _cleanup_metadata(self._storage_handler, self._item_id)
 
     def test_get_item(self):
         update_response = self._storage_handler.update_item(id=self._item_id, caller_identity=self._caller_identity,
@@ -229,7 +230,7 @@ class RdbmsStorageTests(unittest.TestCase):
 
         self.assertEqual(resource_ovrr, handler._resource_table_name)
         self.assertEqual(metadata_ovrr, handler._metadata_table_name)
-        teardown(handler)
+        _teardown(handler)
 
     def test_item_update(self):
         update_response = self._storage_handler.update_item(id=self._item_id, caller_identity=self._caller_identity,
@@ -265,13 +266,48 @@ class RdbmsStorageTests(unittest.TestCase):
         self.assertTrue(meta[0].get("meta2"), newval)
 
         # cleanup metadata
-        remove_metadata(self._storage_handler, self._item_id)
+        _cleanup_metadata(self._storage_handler, self._item_id)
 
     def test_item_delete(self):
-        pass
+        update_response = self._storage_handler.update_item(id=self._item_id, caller_identity=self._caller_identity,
+                                                            **_test_resource)
+        self.assertTrue(update_response.get(params.RESOURCE).get(params.DATA_MODIFIED))
+
+        delete_response = self._storage_handler.delete(id=self._item_id, caller_identity=self._caller_identity)
+
+        self.assertIsNotNone(delete_response)
+        self.assertIsNotNone(delete_response.get(params.RESOURCE))
+        self.assertTrue(delete_response.get(params.RESOURCE))
 
     def test_meta_delete(self):
-        pass
+        union = {
+            params.RESOURCE: _test_resource.get(params.RESOURCE),
+            params.METADATA: _test_metadata.get(params.METADATA)
+        }
+        # create resource and metadata
+        update_response = self._storage_handler.update_item(id=self._item_id, caller_identity=self._caller_identity,
+                                                            **union)
+
+        # confirm I get fetch the resource and metadata
+        item = self._storage_handler.get(id=self._item_id)
+        self.assertIsNotNone(item)
+        self.assertIsNotNone(item.get(params.RESOURCE))
+        self.assertIsNotNone(item.get(params.METADATA))
+
+        # delete the metadata
+        response = self._storage_handler.delete(id=self._item_id, caller_identity=self._caller_identity,
+                                                **{params.METADATA: []})
+        self.assertIsNotNone(response)
+        self.assertTrue(response.get(params.METADATA).get(params.DATA_MODIFIED))
+
+        # confirm I can't get the metadata
+        with self.assertRaises(exceptions.ResourceNotFoundException):
+            self._storage_handler.get_metadata(id=self._item_id)
+
+        # confirm I can get the resource
+        item = self._storage_handler.get(id=self._item_id, suppress_meta_fetch=True)
+        self.assertIsNotNone(item)
+        self.assertIsNotNone(item.get(params.RESOURCE))
 
     def test_item_remove_attr(self):
         pass

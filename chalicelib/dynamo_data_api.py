@@ -537,7 +537,7 @@ class DataAPIStorageHandler:
             except self._dynamo_client.exceptions.ConditionalCheckFailedException:
                 raise InvalidArgumentsException("Unable to Restore Tombstoned Resources or Resource is not Deleted")
 
-    def delete_metadata(self, id):
+    def _delete_metadata(self, id):
         # delete all the metadata
         self._metadata_table.delete_item(Key={
             self._pk_name: utils.get_metaid(id)
@@ -545,18 +545,18 @@ class DataAPIStorageHandler:
 
         return True
 
-    def remove_resource_attributes(self, id, resource_attributes, caller_identity):
+    def remove_resource_attributes(self, id: str, resource_attributes: list, caller_identity: str):
         self._logger.debug(f"Performing Resource Attribute Removal of {resource_attributes}")
         return self._simple_update(id, self._resource_table, f'REMOVE {",".join(resource_attributes)}',
                                    caller_identity, params.ACTION_REMOVE_ATTRIBUTE)
 
-    def remove_metadata_attributes(self, id, metadata_attributes, caller_identity):
+    def remove_metadata_attributes(self, id: str, metadata_attributes: list, caller_identity: str):
         self._logger.debug(f"Performing Resource Attribute Removal of {metadata_attributes}")
         return self._simple_update(id, self._metadata_table, f'REMOVE {",".join(metadata_attributes)}',
                                    caller_identity, params.ACTION_REMOVE_ATTRIBUTE)
 
     # public method to delete an item from the data API
-    def delete(self, id, caller_identity, **kwargs):
+    def delete(self, id: str, caller_identity: str, **kwargs):
         # TODO Move delete logic around resources, metadata, and attribute removal into data api
         log.debug("Storage level Delete")
         log.debug(kwargs)
@@ -592,15 +592,15 @@ class DataAPIStorageHandler:
 
         if delete_metadata is True:
             self._logger.debug("Deleting Item Metadata")
-            deleted = self.delete_metadata(id)
+            deleted = self._delete_metadata(id)
 
         if delete_resource is True:
             self._logger.debug("Deleting Item Resource")
-            deleted = self.delete_resource(id, caller_identity, **kwargs)
+            deleted = self._delete_resource(id, caller_identity, **kwargs)
 
         return deleted
 
-    def delete_resource(self, id, caller_identity, **kwargs):
+    def _delete_resource(self, id, caller_identity, **kwargs):
         self._logger.debug("Performing deletion of full Resource")
         if params.DELETE_MODE in kwargs and self._allow_runtime_delete_mode_change is True and kwargs.get(
                 params.DELETE_MODE) != self._delete_mode:

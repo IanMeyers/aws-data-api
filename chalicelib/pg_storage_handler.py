@@ -1,9 +1,7 @@
 import chalicelib.utils as utils
 import chalicelib.parameters as params
 import chalicelib.exceptions as exceptions
-import boto3
 import os
-import sys
 import pg8000
 from pg8000.exceptions import ProgrammingError
 import ssl
@@ -332,12 +330,16 @@ class DataAPIStorageHandler:
         return f'insert into {table_ref} ({columns}) values ({",".join(values)})'
 
     def __init__(self, table_name, primary_key_attribute, region, delete_mode, allow_runtime_delete_mode_change,
-                 table_indexes, metadata_indexes, crawler_rolename,
-                 catalog_database, allow_non_itemmaster_writes, strict_occv, gremlin_address, deployed_account,
-                 pitr_enabled=None, kms_key_arn=None, schema_validation_refresh_hitcount=None, extended_config=None,
+                 table_indexes, metadata_indexes, schema_validation_refresh_hitcount, crawler_rolename,
+                 catalog_database, allow_non_itemmaster_writes, strict_occv, deployed_account,
+                 pitr_enabled=None, kms_key_arn=None, logger=None, extended_config=None,
                  **kwargs):
+
         # setup class logger
-        self._logger = utils.setup_logging()
+        if logger == None:
+            self._logger = utils.setup_logging()
+        else:
+            self._logger = logger
 
         global log
         log = self._logger
@@ -361,6 +363,7 @@ class DataAPIStorageHandler:
         self._extended_config = extended_config
         self._crawler_rolename = crawler_rolename
         self._catalog_database = catalog_database
+        self._delete_mode = delete_mode
 
         # resolve connection details
         self._cluster_address = kwargs.get(params.CLUSTER_ADDRESS)
@@ -408,7 +411,7 @@ class DataAPIStorageHandler:
         if record is not None and record != () and record[0] != 0:
             return True
         else:
-            return False
+            raise exceptions.ResourceNotFoundException()
 
     def list_items(self, **kwargs):
         limit = kwargs.get(params.QUERY_PARAM_LIMIT)
@@ -476,15 +479,19 @@ class DataAPIStorageHandler:
         if suppress_meta_fetch is False:
             try:
                 meta = self.get_metadata(id=id)
+
+                if meta is not None:
+                    output[params.METADATA] = meta
+
             except exceptions.ResourceNotFoundException:
                 pass
-
-            if meta is not None:
-                output[params.METADATA] = meta
 
         return output
 
     def get_metadata(self, id: str):
+        # validate that the object isn't deleted
+        self.check(id)
+
         schema = self._metadata_schema.get("properties")
 
         # create the type map for what will be returned
@@ -502,7 +509,7 @@ class DataAPIStorageHandler:
             return utils.pivot_resultset_into_json(records, list(cols.keys()), type_map)
         elif records is not None and len(records) > 1:
             raise exceptions.DetailedException("O(1) lookup of Metadata returned multiple rows")
-        elif records is None:
+        elif records is None or records[0] is None:
             raise exceptions.ResourceNotFoundException()
 
     def _create_restore_statement(self, id: str, caller_identity: str):
@@ -517,17 +524,72 @@ class DataAPIStorageHandler:
 
         return True if counts is not None and counts[0] > 0 else False
 
+    def _delete_record(self, table_name: str, item_id: str):
+        delete_stmt = f"delete from {table_name} where {self._pk_name} = '{item_id}'"
+
+        counts, records = self._run_commands([delete_stmt])
+
+        return True if counts is not None and counts[0] > 0 else False
+
+    def _delete_metadata(self, id: str):
+        return self._delete_record(table_name=self._metadata_table_name, item_id=id)
+
     def delete(self, id: str, caller_identity: str, **kwargs):
-        update = self._create_update_statement(table_ref=self._resource_table_name, pk_name=self._pk_name,
-                                               input={_who_col_map.get(params.DELETED): True},
-                                               item_id=id, caller_identity=caller_identity)
-        counts, records = self._run_commands([update])
+        response = {}
 
-    def delete_resource(self, id, caller_identity, **kwargs):
-        pass
+        if params.METADATA in kwargs:
+            if len(kwargs.get(params.METADATA)) == 0:
+                # hard delete the metadata record - there is no soft delete
+                response[params.METADATA] = {
+                    params.DATA_MODIFIED: self._delete_metadata(id)
+                }
+            else:
+                # just delete the specified attributes
+                response[params.METADATA] = {
+                    params.DATA_MODIFIED: self.remove_metadata_attributes(id=id,
+                                                                          metadata_attributes=kwargs.get(
+                                                                              params.METADATA),
+                                                                          caller_identity=caller_identity)
+                }
 
-    def delete_metadata(self, id):
-        pass
+        if kwargs is None or kwargs == {} or params.RESOURCE in kwargs:
+            if params.RESOURCE not in kwargs or len(kwargs.get(params.RESOURCE) == 0):
+                if self._delete_mode == params.DELETE_MODE_SOFT:
+                    # perform a soft delete and reflect that only the resource will have been deleted in the response§
+                    update = self._create_update_statement(table_ref=self._resource_table_name, pk_name=self._pk_name,
+                                                           input={_who_col_map.get(params.DELETED): True},
+                                                           item_id=id, caller_identity=caller_identity)
+                    counts, records = self._run_commands([update])
+
+                    if counts is not None and counts[0] > 0:
+                        response[params.RESOURCE] = {
+                            params.DATA_MODIFIED: True
+                        }
+                    else:
+                        response[params.RESOURCE] = {
+                            params.DATA_MODIFIED: False
+                        }
+                elif self._delete_mode == params.DELETE_MODE_HARD:
+                    # remove the metadata
+                    response[params.METADATA] = {
+                        params.DATA_MODIFIED: self._delete_metadata(id)
+                    }
+
+                    # delete the database record
+                    response[params.RESOURCE] = {
+                        params.DATA_MODIFIED: self._delete_record(table_name=self._resource_table_name, item_id=id)
+                    }
+                else:
+                    # tombstone deletions not supported in rdbms due to nullability constraints
+                    raise exceptions.UnimplementedFeatureException("Cannot Tombstone Delete in RDBMS")
+            else:
+                # remove resource attributes only
+                response[params.RESOURCE] = {
+                    params.DATA_MODIFIED: self.remove_resource_attributes(id=id, resource_attributes=kwargs.get(
+                        params.RESOURCE), caller_identity=caller_identity)
+                }
+
+        return response
 
     def drop_table(self, table_name, do_export=True):
         pass
@@ -590,13 +652,32 @@ class DataAPIStorageHandler:
     def item_master_update(self, caller_identity: str, **kwargs):
         pass
 
-    def remove_metadata_attributes(self, id, metadata_attributes: list, caller_identity: str):
-        pass
+    def _remove_attributes_from_table(self, item_id: str, attribute_list: list, table_name: str, caller_identity: str):
+        # generate the update statement setting each attribute to NULL
+        update_attribute_clauses = []
+        for r in attribute_list:
+            update_attribute_clauses.append(f"{r} = null")
+
+        # add who column update statements
+        update_attribute_clauses.extend(
+            self._who_column_update(caller_identity=caller_identity, version_increment=True))
+
+        # create the update statement
+        update_statement = f"update {self.table_name} set {','.join(update_attribute_clauses)} where {self._pk_name} = {item_id}"
+
+        counts, rows = self._run_commands(commands=[update_statement])
+
+        return True if counts is not None and counts[0] > 0 else False
+
+    def remove_metadata_attributes(self, id: str, metadata_attributes: list, caller_identity: str):
+        return self._remove_attributes_from_table(item_id=id, attribute_list=metadata_attributes,
+                                                  table_name=self._metadata_table_name, caller_identity=caller_identity)
 
     def remove_resource_attributes(self, id: str,
                                    resource_attributes: list,
                                    caller_identity: str):
-        pass
+        return self._remove_attributes_from_table(item_id=id, attribute_list=resource_attributes,
+                                                  table_name=self._resource_table_name, caller_identity=caller_identity)
 
     def disconnect(self):
         self._db_conn.close()
