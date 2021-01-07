@@ -553,7 +553,7 @@ class DataAPIStorageHandler:
                 }
 
         if kwargs is None or kwargs == {} or params.RESOURCE in kwargs:
-            if params.RESOURCE not in kwargs or len(kwargs.get(params.RESOURCE) == 0):
+            if params.RESOURCE not in kwargs or len(kwargs.get(params.RESOURCE)) == 0:
                 if self._delete_mode == params.DELETE_MODE_SOFT:
                     # perform a soft delete and reflect that only the resource will have been deleted in the response§
                     update = self._create_update_statement(table_ref=self._resource_table_name, pk_name=self._pk_name,
@@ -663,7 +663,7 @@ class DataAPIStorageHandler:
             self._who_column_update(caller_identity=caller_identity, version_increment=True))
 
         # create the update statement
-        update_statement = f"update {self.table_name} set {','.join(update_attribute_clauses)} where {self._pk_name} = {item_id}"
+        update_statement = f"update {table_name} set {','.join(update_attribute_clauses)} where {self._pk_name} = '{item_id}'"
 
         counts, rows = self._run_commands(commands=[update_statement])
 

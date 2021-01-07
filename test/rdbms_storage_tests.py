@@ -310,7 +310,27 @@ class RdbmsStorageTests(unittest.TestCase):
         self.assertIsNotNone(item.get(params.RESOURCE))
 
     def test_item_remove_attr(self):
-        pass
+        # create an item with a value to be removed
+        c = "attr4"
+        item = copy.deepcopy(_test_resource)
+        item[params.RESOURCE][c] = 1000
+        update_response = self._storage_handler.update_item(id=self._item_id, caller_identity=self._caller_identity,
+                                                            **item)
+        self.assertTrue(update_response.get(params.RESOURCE).get(params.DATA_MODIFIED))
+
+        # make sure the created object is correct
+        i = self._storage_handler.get(id=self._item_id, suppress_meta_fetch=True)
+        self.assertIsNotNone(i)
+        self.assertIsNotNone(i.get(params.RESOURCE))
+        self.assertIsNotNone(i.get(params.RESOURCE)[0].get(c))
+
+        # delete the attr4 from the object
+        delete_response = self._storage_handler.delete(id=self._item_id, caller_identity=self._caller_identity,
+                                                       **{params.RESOURCE: [c]})
+        i = self._storage_handler.get(id=self._item_id, suppress_meta_fetch=True)
+        self.assertIsNotNone(i)
+        self.assertIsNotNone(i.get(params.RESOURCE))
+        self.assertIsNone(i.get(params.RESOURCE)[0].get(c))
 
     def test_meta_remove_attr(self):
         pass
