@@ -453,28 +453,38 @@ def verify_crawler(table_name, crawler_rolename, catalog_db, datasource_type: st
                 pass
 
 
-def pivot_resultset_into_json(rows: list, column_spec: list, type_map: dict = None) -> list:
-    output = []
+def pivot_resultset_into_json(rows: list, column_spec: list, type_map: dict = None):
+    def _handle_item(item: list) -> dict:
+        obj = {}
+        for i, c in enumerate(column_spec):
+            # skip null responses
+            if item[i] is None:
+                pass
+            else:
+                # special handling for found types including boolean (returned as '0' or '1') and datetime
+                if type(item[i]) == str:
+                    if item[i].lower() != 'null' and type_map.get(c) == 'boolean':
+                        obj[c] = strtobool(item[i])
+                elif type(item[i]) == datetime.datetime:
+                    obj[c] = item[i].strftime(params.DEFAULT_DATE_FORMAT)
 
-    for r in rows:
-        if r is not None:
-            obj = {}
-            for i, c in enumerate(column_spec):
-                # skip null responses
-                if r[i] is None:
-                    pass
-                else:
-                    # special handling for found types including boolean (returned as '0' or '1') and datetime
-                    if type(r[i]) == str:
-                        if r[i].lower() != 'null' and type_map.get(c) == 'boolean':
-                            obj[c] = strtobool(r[i])
-                    elif type(r[i]) == datetime.datetime:
-                        obj[c] = r[i].strftime(params.DEFAULT_DATE_FORMAT)
+            # no special handling or null schema, so set the object value to the returned type
+            if c not in obj:
+                obj[c] = item[i]
 
-                # no special handling or null schema, so set the object value to the returned type
-                if c not in obj:
-                    obj[c] = r[i]
-            output.append(obj)
+        return obj
+
+    output = None
+
+    if len(rows) == 1:
+        output = _handle_item(rows[0])
+    else:
+        output = []
+
+        for r in rows:
+            if r is not None:
+                obj = _handle_item(r)
+                output.append(obj)
 
     return output
 
@@ -493,7 +503,7 @@ def json_to_pg(p_name: str, p_spec: dict, p_required: dict, pk_name: str) -> str
         elif p_type.lower() == 'integer':
             base = 'integer'
         elif p_type.lower() == 'boolean':
-            base = 'char(1) NOT NULL DEFAULT 0'
+            base = 'char(1) DEFAULT 0'
             return base
         else:
             raise exceptions.UnimplementedFeatureException(f"Type {p_type} not translatable to RDBMS types")

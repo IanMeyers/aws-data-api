@@ -201,7 +201,6 @@ class RdbmsStorageTests(unittest.TestCase):
 
         meta = self._storage_handler.get_metadata(id=self._item_id)
         self.assertIsNotNone(meta)
-        meta = meta[0]
         self.assertEqual(meta.get("meta1"), _meta_attr1)
         self.assertEqual(meta.get("meta2"), _meta_attr2)
         self.assertEqual(meta.get("meta3"), _meta_attr3)
@@ -217,7 +216,7 @@ class RdbmsStorageTests(unittest.TestCase):
         # get the item back
         item = self._storage_handler.get(id=self._item_id).get(params.RESOURCE)
 
-        self.assertEqual(item[0].get("attr1"), _resource_attr1)
+        self.assertEqual(item.get("attr1"), _resource_attr1)
 
     def test_bound_to_existing(self):
         resource_ovrr = "test_override_table"
@@ -247,7 +246,7 @@ class RdbmsStorageTests(unittest.TestCase):
 
         # check that the update worked
         item = self._storage_handler.get(id=self._item_id)
-        self.assertTrue(item.get(params.RESOURCE)[0].get("attr2"), upd)
+        self.assertTrue(item.get(params.RESOURCE).get("attr2"), upd)
 
     def test_meta_update(self):
         update_response = self._storage_handler.update_item(id=self._item_id, caller_identity=self._caller_identity,
@@ -263,7 +262,7 @@ class RdbmsStorageTests(unittest.TestCase):
 
         # check that the update worked
         meta = self._storage_handler.get_metadata(id=self._item_id)
-        self.assertTrue(meta[0].get("meta2"), newval)
+        self.assertTrue(meta.get("meta2"), newval)
 
         # cleanup metadata
         _cleanup_metadata(self._storage_handler, self._item_id)
@@ -322,7 +321,7 @@ class RdbmsStorageTests(unittest.TestCase):
         i = self._storage_handler.get(id=self._item_id, suppress_meta_fetch=True)
         self.assertIsNotNone(i)
         self.assertIsNotNone(i.get(params.RESOURCE))
-        self.assertIsNotNone(i.get(params.RESOURCE)[0].get(c))
+        self.assertIsNotNone(i.get(params.RESOURCE).get(c))
 
         # delete the attr4 from the object
         delete_response = self._storage_handler.delete(id=self._item_id, caller_identity=self._caller_identity,
@@ -330,10 +329,28 @@ class RdbmsStorageTests(unittest.TestCase):
         i = self._storage_handler.get(id=self._item_id, suppress_meta_fetch=True)
         self.assertIsNotNone(i)
         self.assertIsNotNone(i.get(params.RESOURCE))
-        self.assertIsNone(i.get(params.RESOURCE)[0].get(c))
+        self.assertIsNone(i.get(params.RESOURCE).get(c))
 
     def test_meta_remove_attr(self):
-        pass
+        # create an item with a value to be removed
+        c = "meta3"
+        item = copy.deepcopy(_test_metadata)
+        item[params.METADATA][c] = False
+        update_response = self._storage_handler.update_item(id=self._item_id, caller_identity=self._caller_identity,
+                                                            **item)
+        self.assertTrue(update_response.get(params.METADATA).get(params.DATA_MODIFIED))
+
+        # make sure the created object is correct
+        i = self._storage_handler.get_metadata(id=self._item_id)
+        self.assertIsNotNone(i)
+        self.assertIsNotNone(i.get(c))
+
+        # delete the meta3 from the object
+        delete_response = self._storage_handler.delete(id=self._item_id, caller_identity=self._caller_identity,
+                                                       **{params.METADATA: [c]})
+        i = self._storage_handler.get_metadata(id=self._item_id)
+        self.assertIsNotNone(i)
+        self.assertIsNone(i.get(c))
 
     def test_find(self):
         pass

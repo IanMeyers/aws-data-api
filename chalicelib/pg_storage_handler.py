@@ -8,7 +8,7 @@ import ssl
 import socket
 import traceback
 import json
-import datetime
+import fastjsonschema
 
 _who_col_map = {
     params.ITEM_VERSION: "item_version",
@@ -377,6 +377,12 @@ class DataAPIStorageHandler:
         self._resource_schema = kwargs.get(params.CONTROL_TYPE_RESOURCE_SCHEMA)
         self._metadata_schema = kwargs.get(params.CONTROL_TYPE_METADATA_SCHEMA)
 
+        # create schema validators
+        if self._resource_schema is not None:
+            self._resource_validator = fastjsonschema.compile(self._resource_schema)
+        if self._metadata_schema is not None:
+            self._metadata_validator = fastjsonschema.compile(self._metadata_schema)
+
         if self._resource_schema is None:
             raise exceptions.InvalidArgumentsException(
                 "Relational Storage Handler requires a JSON Schema to initialise")
@@ -631,12 +637,19 @@ class DataAPIStorageHandler:
 
         if params.METADATA in kwargs:
             metadata = kwargs.get(params.METADATA)
+
+            if self._metadata_validator is not None:
+                self._metadata_validator(metadata)
+
             response[params.METADATA] = self._execute_merge(table_ref=self._metadata_table_name, id=id,
                                                             pk_name=self._pk_name,
                                                             caller_identity=caller_identity, **metadata)
 
         if params.RESOURCE in kwargs:
             resource = kwargs.get(params.RESOURCE)
+            if self._resource_validator is not None:
+                self._resource_validator(resource)
+
             response[params.RESOURCE] = self._execute_merge(table_ref=self._resource_table_name, id=id,
                                                             pk_name=self._pk_name,
                                                             caller_identity=caller_identity, **resource)
