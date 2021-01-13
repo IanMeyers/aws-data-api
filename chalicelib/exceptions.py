@@ -24,6 +24,12 @@ class InvalidArgumentsException(Exception):
         self.message = message
 
 
+class SchemaViolationException(Exception):
+    def __init__(self, message=None):
+        super().__init__("Provided object violates required Schema" if message is None else message)
+        self.message = message
+
+
 class DetailedException(Exception):
     message = None
     detail = None

@@ -80,11 +80,12 @@ class DataAPIStorageHandler:
 
         def _add_output():
             try:
-                counts.append(cursor.rowcount)
+                rowcount = cursor.rowcount
+                counts.append(rowcount)
                 r = cursor.fetchall()
 
                 if r is not None and r != ():
-                    rows.append(r[0])
+                    rows.extend(r)
                 else:
                     rows.append(None)
             except ProgrammingError as e:
@@ -200,6 +201,7 @@ class DataAPIStorageHandler:
             cursor = self._db_conn.cursor()
             cursor.execute(f"select count(9) from {table_ref}")
             res = cursor.fetchone()
+            self._logger.info(f"Bound to existing table {table_ref}")
         except ProgrammingError as pe:
             if "not exist" in str(pe):
                 # table doesn't exist so create it based on the current schema
@@ -268,7 +270,8 @@ class DataAPIStorageHandler:
             f"'{caller_identity}'"
         ]
 
-    def _synthesize_update(self, input: dict, caller_identity: str, version_increment: bool = True) -> list:
+    def _json_to_column_list(self, input: dict, caller_identity: str = None, version_increment: bool = True,
+                             add_who: bool = True) -> list:
         ''' Generate a valid list of update clauses from an input dict. For example:
 
         {"a":1, "b":2} becomes ["a = 1", "b=2"]
@@ -283,14 +286,15 @@ class DataAPIStorageHandler:
             output.append(f"{k} = {set_val}")
 
         # now add the 'who' column and item version updates
-        output.extend(self._who_column_update(caller_identity, version_increment))
+        if add_who is True:
+            output.extend(self._who_column_update(caller_identity, version_increment))
 
         return output
 
     def _create_update_statement(self, table_ref: str, pk_name: str, input: dict, item_id: str,
                                  caller_identity: str, version_increment: bool = True,
                                  check_delete: bool = True) -> str:
-        updates = ",".join(self._synthesize_update(input, caller_identity, version_increment))
+        updates = ",".join(self._json_to_column_list(input, caller_identity, version_increment))
         statement = f"update {table_ref} set {updates} where {pk_name} = '{item_id}'"
 
         if check_delete is True:
@@ -445,7 +449,7 @@ class DataAPIStorageHandler:
         counts, records = self._run_commands([statement])
 
         if records is not None and len(records) == 1:
-            return utils.pivot_resultset_into_json(records, columns, schema)
+            return utils.pivot_resultset_into_json(rows=records, column_spec=columns, type_map=schema)
         elif records is not None and len(records) > 1:
             raise exceptions.DetailedException("O(1) lookup of Resource returned multiple rows")
         elif records is None:
@@ -512,7 +516,7 @@ class DataAPIStorageHandler:
         counts, records = self._run_commands([statement])
 
         if records is not None and len(records) == 1 and records[0] is not None:
-            return utils.pivot_resultset_into_json(records, list(cols.keys()), type_map)
+            return utils.pivot_resultset_into_json(rows=records, column_spec=list(cols.keys()), type_map=type_map)
         elif records is not None and len(records) > 1:
             raise exceptions.DetailedException("O(1) lookup of Metadata returned multiple rows")
         elif records is None or records[0] is None:
@@ -639,7 +643,10 @@ class DataAPIStorageHandler:
             metadata = kwargs.get(params.METADATA)
 
             if self._metadata_validator is not None:
-                self._metadata_validator(metadata)
+                try:
+                    self._metadata_validator(metadata)
+                except fastjsonschema.exceptions.JsonSchemaException as e:
+                    raise exceptions.SchemaViolationException(e)
 
             response[params.METADATA] = self._execute_merge(table_ref=self._metadata_table_name, id=id,
                                                             pk_name=self._pk_name,
@@ -657,7 +664,33 @@ class DataAPIStorageHandler:
         return response
 
     def find(self, **kwargs):
-        pass
+        query_table = None
+        filters = None
+        column_list = None
+
+        # determine if we are performing a resource or metadata search
+        if params.RESOURCE in kwargs and len(params.RESOURCE) > 0:
+            query_table = self._resource_table_name
+            filters = kwargs.get(params.RESOURCE)
+            source_schema_properties = self._resource_schema.get("properties")
+        elif params.METADATA in kwargs and len(params.METADATA) > 0:
+            query_table = self._metadata_table_name
+            filters = kwargs.get(params.METADATA)
+            source_schema_properties = self._metadata_schema.get("properties")
+        else:
+            raise exceptions.InvalidArgumentsException("Malformed Find Request")
+
+        column_list = list(source_schema_properties.keys())
+
+        # transform column filters
+        column_filters = self._json_to_column_list(input=filters, version_increment=False, add_who=False)
+
+        # generate select statement
+        query = f"select * from {query_table} where {','.join(column_filters)}"
+
+        # return resultset
+        count, rows = self._run_commands(commands=[query])
+        return utils.pivot_resultset_into_json(rows=rows, column_spec=column_list, type_map=source_schema_properties)
 
     def get_streams(self):
         raise exceptions.UnimplementedFeatureException()

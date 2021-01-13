@@ -133,7 +133,7 @@ class RdbmsStorageTests(unittest.TestCase):
             "d": True
         }
 
-        updates = self._storage_handler._synthesize_update(input, self._caller_identity)
+        updates = self._storage_handler._json_to_column_list(input, self._caller_identity)
 
         self.assertEqual(8, len(updates))
         self.assertEqual(updates[0], "a = '12345'")
@@ -353,7 +353,61 @@ class RdbmsStorageTests(unittest.TestCase):
         self.assertIsNone(i.get(c))
 
     def test_find(self):
-        pass
+        # seed the resource and metadata tables with 10 records
+        items = []
+        for x in range(10):
+            proto = {
+                params.RESOURCE: copy.deepcopy(_test_resource).get(params.RESOURCE),
+                params.METADATA: copy.deepcopy(_test_metadata).get(params.METADATA)
+            }
+            proto[params.RESOURCE]["attr2"] = f'{proto.get(params.RESOURCE).get("attr2")}-{x}'
+            proto[params.METADATA]["meta1"] = f'{proto.get(params.METADATA).get("meta1")}-{x}'
+
+            create_response = self._storage_handler.update_item(id=str(x), caller_identity=self._caller_identity,
+                                                                **proto)
+
+            self.assertTrue(create_response.get(params.RESOURCE).get(params.DATA_MODIFIED))
+            self.assertTrue(create_response.get(params.METADATA).get(params.DATA_MODIFIED))
+
+        # issue a find for a single resource
+        find_request = {
+            params.RESOURCE: {
+                "attr2": "abc-7"
+            }
+        }
+        found = self._storage_handler.find(**find_request)
+        self.assertEqual("dict", type(found).__name__)
+        self.assertEqual(found.get("id"), "7")
+
+        # query for multiple resources
+        find_request = {
+            params.RESOURCE: {
+                "attr1": _resource_attr1
+            }
+        }
+        found = self._storage_handler.find(**find_request)
+        self.assertEqual("list", type(found).__name__)
+        self.assertEqual(10, len(found))
+
+        # issue a find for metadata
+        find_request = {
+            params.METADATA: {
+                "meta1": "12345-4"
+            }
+        }
+        found = self._storage_handler.find(**find_request)
+        self.assertEqual("dict", type(found).__name__)
+        self.assertEqual(found.get("id"), "4")
+
+        # query for multiple resources
+        find_request = {
+            params.METADATA: {
+                "meta2": _meta_attr2
+            }
+        }
+        found = self._storage_handler.find(**find_request)
+        self.assertEqual("list", type(found).__name__)
+        self.assertEqual(10, len(found))
 
     def test_restore_statement(self):
         restore = self._storage_handler._create_restore_statement(id=self._item_id,

@@ -778,7 +778,10 @@ class DataAPIStorageHandler:
         schema = self._schema_cache.get(schema_type)
 
         if schema is not None:
-            schema.validate_item(item)
+            try:
+                schema.validate_item(item)
+            except fastjsonschema.exceptions.JsonSchemaException as e:
+                raise SchemaViolationException(e)
         else:
             log.debug(f"No validation performed due to no {schema_type} Schema registered")
 
