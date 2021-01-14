@@ -1,12 +1,16 @@
 DIALECT_PG = 'pg'
 DIALECT_MYSQL = "mysql"
 
+import chalicelib.utils as utils
 import chalicelib.parameters as params
 import chalicelib.exceptions as exceptions
 import pg8000
 import ssl
+import json
 import socket
 import os
+import traceback
+from pg8000.exceptions import ProgrammingError
 
 _who_type_map = {
     DIALECT_PG: {
@@ -36,12 +40,21 @@ _who_invert[DIALECT_PG] = {v: k for k, v in _who_col_map.get(DIALECT_PG).items()
 
 class RdbmsEngineType:
     _dialect = None
+    _logger = None
+    _sql_helper = None
 
     def __init__(self, dialect: str):
         if dialect not in [DIALECT_MYSQL, DIALECT_PG]:
             raise exceptions.InvalidArgumentsException(f"Unknown Dialect {dialect}")
         else:
             self._dialect = dialect
+
+        self._logger = utils.setup_logging()
+
+        # load the sql statement helper
+        with open(os.path.join(os.path.dirname(__file__), f'sql_fragments_{self._dialect}.json'),
+                  'r') as f:
+            self._sql_helper = json.load(f)
 
     def get_connection(self, cluster_user: str, cluster_address: str, cluster_port: int, database: str, pwd: str,
                        ssl: bool):
@@ -126,3 +139,120 @@ class RdbmsEngineType:
             ]
         else:
             raise exceptions.UnimplementedFeatureException()
+
+    def run_commands(self, conn, commands: list) -> list:
+        '''Function to run one or more commands that will return at most one record. For statements that return
+        multiple records, use underlying cursor directly.
+        '''
+        cursor = conn.cursor()
+        counts = []
+        rows = []
+
+        def _add_output():
+            try:
+                rowcount = cursor.rowcount
+                counts.append(rowcount)
+                r = cursor.fetchall()
+
+                if r is not None and r != ():
+                    rows.extend(r)
+                else:
+                    rows.append(None)
+            except ProgrammingError as e:
+                if 'no result set' in str(e):
+                    counts.append(0)
+                    rows.append(None)
+                else:
+                    counts.append(0)
+                    rows.append(e)
+
+        for c in commands:
+            if c is not None:
+                try:
+                    if c.count(';') > 1:
+                        subcommands = c.split(';')
+
+                        for s in subcommands:
+                            if s is not None and s != '':
+                                self._logger.debug(s)
+                                cursor.execute(s.replace("\n", ""))
+                                _add_output()
+                    else:
+                        cursor.execute(c)
+                        _add_output()
+                except pg8000.exceptions.IntegrityError as ie:
+                    pass
+                except Exception as e:
+                    # cowardly bail on errors
+                    conn.rollback()
+                    print(traceback.format_exc())
+                    counts.append(0)
+                    rows.append(e)
+            else:
+                counts.append(0)
+                rows.append(None)
+
+        cursor.close()
+        return counts, rows
+
+    def verify_table(self, conn, table_ref: str, table_schema: dict, pk_name: str) -> None:
+        if self._dialect == DIALECT_PG:
+            try:
+                cursor = conn.cursor()
+                query = f"select count(9) from {table_ref}"
+                self._logger.debug(query)
+                cursor.execute(query)
+                res = cursor.fetchone()
+                self._logger.info(f"Bound to existing table {table_ref}")
+            except ProgrammingError as pe:
+                if "not exist" in str(pe):
+                    # table doesn't exist so create it based on the current schema
+                    self.create_table_from_schema(conn, table_ref, table_schema, pk_name)
+                else:
+                    raise exceptions.DetailedException(pe.message)
+        else:
+            raise exceptions.UnimplementedFeatureException()
+
+    def create_index(self, conn, table_ref: str, column_name: str) -> None:
+        index_name = f"{table_ref}_{column_name}"
+        statement = f"create index {index_name} on {table_ref} ({column_name})"
+
+        self.run_commands(conn, [statement])
+
+        self._logger.info(f"Created new Index {index_name}")
+
+    def verify_indexes(self, conn, table_ref: str, indexes: list) -> None:
+        if indexes is not None:
+            for i in indexes:
+                sql = self.get_sql("VerifyIndexOnColumn") % (table_ref, i)
+
+                counts, index_exists = self.run_commands(conn, [sql])
+
+                if index_exists[0] == () or index_exists[0] is None:
+                    self.create_index(conn, table_ref, i)
+
+    def create_table_from_schema(self, conn, table_ref: str, table_schema: dict, pk_name: str) -> bool:
+        column_spec = []
+        prop = table_schema.get('properties')
+
+        for p in prop.keys():
+            column_spec.append(
+                f"{p} {utils.json_to_pg(p_name=p, p_spec=prop.get(p), p_required=table_schema.get('required'), pk_name=pk_name)}")
+
+        column_spec.extend(self.generate_who_cols())
+
+        # synthesize the create table statement
+        statement = f"create table if not exists {table_ref}({','.join(column_spec)})"
+
+        self.run_commands(conn, [statement])
+
+        self._logger.info(f"Created new Table {table_ref}")
+
+        return True
+
+    def get_sql(self, name):
+        sql = self._sql_helper.get(name)
+        if sql is None:
+            raise exceptions.InvalidArgumentsException(f"Unable to look up SQL {name}")
+        else:
+            return sql

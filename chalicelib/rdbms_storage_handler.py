@@ -4,10 +4,8 @@ import chalicelib.exceptions as exceptions
 import chalicelib.rdbms_engine_types as engine_types
 from chalicelib.rdbms_engine_types import RdbmsEngineType
 import os
-import traceback
 import json
 import fastjsonschema
-from pg8000.exceptions import ProgrammingError
 
 
 class DataAPIStorageHandler:
@@ -43,87 +41,6 @@ class DataAPIStorageHandler:
     _extended_config = None
     _engine_type = None
 
-    def _get_sql(self, name):
-        sql = self._sql_helper.get(name)
-        if sql is None:
-            raise exceptions.InvalidArgumentsException(f"Unable to look up SQL {name}")
-        else:
-            return sql
-
-    def _run_commands(self, commands: list) -> list:
-        '''Function to run one or more commands that will return at most one record. For statements that return
-        multiple records, use underlying cursor directly.
-        '''
-        cursor = self._db_conn.cursor()
-        counts = []
-        rows = []
-
-        def _add_output():
-            try:
-                rowcount = cursor.rowcount
-                counts.append(rowcount)
-                r = cursor.fetchall()
-
-                if r is not None and r != ():
-                    rows.extend(r)
-                else:
-                    rows.append(None)
-            except ProgrammingError as e:
-                if 'no result set' in str(e):
-                    counts.append(0)
-                    rows.append(None)
-                else:
-                    counts.append(0)
-                    rows.append(e)
-
-        for c in commands:
-            if c is not None:
-                try:
-                    if c.count(';') > 1:
-                        subcommands = c.split(';')
-
-                        for s in subcommands:
-                            if s is not None and s != '':
-                                self._logger.debug(s)
-                                cursor.execute(s.replace("\n", ""))
-                                _add_output()
-                    else:
-                        cursor.execute(c)
-                        _add_output()
-                except pg8000.exceptions.IntegrityError as ie:
-                    pass
-                except Exception as e:
-                    # cowardly bail on errors
-                    self._db_conn.rollback()
-                    print(traceback.format_exc())
-                    counts.append(0)
-                    rows.append(e)
-            else:
-                counts.append(0)
-                rows.append(None)
-
-        cursor.close()
-        return counts, rows
-
-    def _create_table_from_schema(self, table_ref: str, table_schema: dict) -> bool:
-        column_spec = []
-        prop = table_schema.get('properties')
-
-        for p in prop.keys():
-            column_spec.append(
-                f"{p} {utils.json_to_pg(p_name=p, p_spec=prop.get(p), p_required=self._resource_schema.get('required'), pk_name=self._pk_name)}")
-
-        column_spec.extend(self._engine_type.generate_who_cols())
-
-        # synthesize the create table statement
-        statement = f"create table if not exists {table_ref}({','.join(column_spec)})"
-
-        self._run_commands([statement])
-
-        self._logger.info(f"Created new Table {table_ref}")
-
-        return True
-
     def _verify_catalog(self, table_ref: str) -> None:
         # setup a glue connection and crawler for this database and table
         args = {
@@ -143,41 +60,6 @@ class DataAPIStorageHandler:
                              logger=self._logger,
                              crawler_prefix=f'PG-{self._cluster_address.split(".")[0]}',
                              **args)
-
-    def _verify_table(self, table_ref: str, table_schema: dict) -> None:
-        try:
-            cursor = self._db_conn.cursor()
-            query = f"select count(9) from {table_ref}"
-            self._logger.debug(query)
-            cursor.execute(query)
-            res = cursor.fetchone()
-            self._logger.info(f"Bound to existing table {table_ref}")
-        except ProgrammingError as pe:
-            if "not exist" in str(pe):
-                # table doesn't exist so create it based on the current schema
-                self._create_table_from_schema(table_ref, table_schema)
-            else:
-                raise exceptions.DetailedException(pe.message)
-        except Exception as e:
-            self._logger.error(e)
-
-    def _create_index(self, table_ref: str, column_name: str) -> None:
-        index_name = f"{table_ref}_{column_name}"
-        statement = f"create index {index_name} on {table_ref} ({column_name})"
-
-        self._run_commands([statement])
-
-        self._logger.info(f"Created new Index {index_name}")
-
-    def _verify_indexes(self, table_ref: str, indexes: list) -> None:
-        if indexes is not None:
-            for i in indexes:
-                sql = self._get_sql("VerifyIndexOnColumn") % (table_ref, i)
-
-                counts, index_exists = self._run_commands([sql])
-
-                if index_exists[0] == () or index_exists[0] is None:
-                    self._create_index(table_ref, i)
 
     def _extract_type(self, input):
         if type(input) == str:
@@ -280,11 +162,6 @@ class DataAPIStorageHandler:
         global log
         log = self._logger
 
-        # load the sql statement helper
-        with open(os.path.join(os.path.dirname(__file__), f'sql_fragments_{kwargs.get(params.RDBMS_DIALECT)}.json'),
-                  'r') as f:
-            self._sql_helper = json.load(f)
-
         # setup foundation properties
         self._region = region
         self._resource_table_name = table_name.lower()
@@ -342,18 +219,23 @@ class DataAPIStorageHandler:
             self._logger.info(f"Connected to {self._cluster_address}:{self._cluster_port} as {self._cluster_user}")
 
             # verify the resource table, indexes, and catalog registry exists
-            self._verify_table(self._resource_table_name, self._resource_schema)
-            self._verify_indexes(self._resource_table_name, table_indexes)
+            self._engine_type.verify_table(conn=self._db_conn, table_ref=self._resource_table_name,
+                                           table_schema=self._resource_schema, pk_name=self._pk_name)
+            self._engine_type.verify_indexes(self._db_conn, self._resource_table_name, table_indexes)
             self._verify_catalog(self._resource_table_name)
 
             # verify the metadata table, indexes, and catalog registry exists
-            self._verify_table(self._metadata_table_name, self._metadata_schema)
-            self._verify_indexes(self._metadata_table_name, metadata_indexes)
+            self._engine_type.verify_table(conn=self._db_conn, table_ref=self._metadata_table_name,
+                                           table_schema=self._metadata_schema, pk_name=self._pk_name)
+            self._engine_type.verify_indexes(self._db_conn, self._metadata_table_name, metadata_indexes)
+
+    def run_commands(self, commands: list):
+        return self._engine_type.run_commands(conn=self._db_conn, commands=commands)
 
     def check(self, id: str) -> bool:
         statement = f"select count(9) from {self._resource_table_name} where {self._pk_name} = '{id}' and {self._engine_type.get_who(params.DELETED)} = FALSE"
 
-        counts, rows = self._run_commands([statement])
+        counts, rows = self._engine_type.run_commands(self._db_conn, [statement])
 
         record = rows[0]
         if record is not None and record != () and record[0] != 0:
@@ -384,7 +266,7 @@ class DataAPIStorageHandler:
                 del columns[n]
 
         statement = f"select {','.join(columns)} from {self._resource_table_name} where {self._pk_name} = '{id}' and {self._engine_type.get_who(params.DELETED)} = FALSE"
-        counts, records = self._run_commands([statement])
+        counts, records = self._engine_type.run_commands(self._db_conn, [statement])
 
         if records is not None and len(records) == 1:
             return utils.pivot_resultset_into_json(rows=records, column_spec=columns, type_map=schema)
@@ -446,7 +328,7 @@ class DataAPIStorageHandler:
 
         # implement delete check by joining to the resource table on the primary key
         statement = f"select {','.join(cols.values())} from {self._metadata_table_name} a, {self._resource_table_name} b where a.{self._pk_name} = '{id}' and a.{self._pk_name} = b.{self._pk_name} and b.{self._engine_type.get_who(params.DELETED)} = FALSE"
-        counts, records = self._run_commands([statement])
+        counts, records = self._engine_type.run_commands(self._db_conn, [statement])
 
         if records is not None and len(records) == 1 and records[0] is not None:
             return utils.pivot_resultset_into_json(rows=records, column_spec=list(cols.keys()), type_map=type_map)
@@ -463,14 +345,14 @@ class DataAPIStorageHandler:
 
     def restore(self, id: str, caller_identity: str):
         restore = self._create_restore_statement(id, caller_identity)
-        counts, rows = self._run_commands([restore])
+        counts, rows = self._engine_type.run_commands(self._db_conn, [restore])
 
         return True if counts is not None and counts[0] > 0 else False
 
     def _delete_record(self, table_name: str, item_id: str):
         delete_stmt = f"delete from {table_name} where {self._pk_name} = '{item_id}'"
 
-        counts, records = self._run_commands([delete_stmt])
+        counts, records = self._engine_type.run_commands(self._db_conn, [delete_stmt])
 
         return True if counts is not None and counts[0] > 0 else False
 
@@ -502,7 +384,7 @@ class DataAPIStorageHandler:
                     update = self._create_update_statement(table_ref=self._resource_table_name, pk_name=self._pk_name,
                                                            input={self._engine_type.get_who(params.DELETED): True},
                                                            item_id=id, caller_identity=caller_identity)
-                    counts, records = self._run_commands([update])
+                    counts, records = self._engine_type.run_commands(self._db_conn, [update])
 
                     if counts is not None and counts[0] > 0:
                         response[params.RESOURCE] = {
@@ -541,14 +423,14 @@ class DataAPIStorageHandler:
         update = self._create_update_statement(table_ref=table_ref, pk_name=pk_name,
                                                input=kwargs,
                                                item_id=id, caller_identity=caller_identity)
-        counts, records = self._run_commands([update])
+        counts, records = self._engine_type.run_commands(self._db_conn, [update])
 
         if counts[0] == 0:
             # update statement didn't work, so insert the value
             insert = self._create_insert_statement(table_ref=table_ref, pk_name=pk_name,
                                                    pk_value=id, input=kwargs, caller_identity=caller_identity)
 
-            counts, records = self._run_commands([insert])
+            counts, records = self._engine_type.run_commands(self._db_conn, [insert])
 
             if counts[0] == 1:
                 return {
@@ -623,7 +505,7 @@ class DataAPIStorageHandler:
         self._logger.debug(query)
 
         # return resultset
-        count, rows = self._run_commands(commands=[query])
+        count, rows = self._engine_type.run_commands(conn=self._db_conn, commands=[query])
         return utils.pivot_resultset_into_json(rows=rows, column_spec=column_list, type_map=source_schema_properties)
 
     def get_streams(self):
@@ -645,19 +527,23 @@ class DataAPIStorageHandler:
         # create the update statement
         update_statement = f"update {table_name} set {','.join(update_attribute_clauses)} where {self._pk_name} = '{item_id}'"
 
-        counts, rows = self._run_commands(commands=[update_statement])
+        counts, rows = self._engine_type.run_commands(conn=self._db_conn, commands=[update_statement])
 
         return True if counts is not None and counts[0] > 0 else False
 
     def remove_metadata_attributes(self, id: str, metadata_attributes: list, caller_identity: str):
-        return self._remove_attributes_from_table(item_id=id, attribute_list=metadata_attributes,
-                                                  table_name=self._metadata_table_name, caller_identity=caller_identity)
+        return self._remove_attributes_from_table(item_id=id,
+                                                  attribute_list=metadata_attributes,
+                                                  table_name=self._metadata_table_name,
+                                                  caller_identity=caller_identity)
 
     def remove_resource_attributes(self, id: str,
                                    resource_attributes: list,
                                    caller_identity: str):
-        return self._remove_attributes_from_table(item_id=id, attribute_list=resource_attributes,
-                                                  table_name=self._resource_table_name, caller_identity=caller_identity)
+        return self._remove_attributes_from_table(item_id=id,
+                                                  attribute_list=resource_attributes,
+                                                  table_name=self._resource_table_name,
+                                                  caller_identity=caller_identity)
 
     def disconnect(self):
         self._db_conn.close()

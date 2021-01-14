@@ -40,14 +40,14 @@ _test_metadata = {
 
 
 def _teardown(storage_handler) -> None:
-    cursor = storage_handler._run_commands(
+    cursor = storage_handler.run_commands(
         [f"drop table if exists {storage_handler._resource_table_name}",
          f"drop table if exists {storage_handler._metadata_table_name}"])
     storage_handler.disconnect()
 
 
 def _cleanup_metadata(storage_handler, item_id) -> None:
-    cursor = storage_handler._run_commands(
+    cursor = storage_handler.run_commands(
         [f"delete from {storage_handler._metadata_table_name} where {storage_handler._pk_name} = '{item_id}'"])
 
 
