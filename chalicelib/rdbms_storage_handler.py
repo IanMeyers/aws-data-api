@@ -444,7 +444,7 @@ class DataAPIStorageHandler:
             }
 
     def update_item(self, id: str, caller_identity: str, **kwargs) -> bool:
-        ''' Method ot merge an item into the table. We will first attempt to update an existing item, and when that
+        ''' Method to merge an item into the table. We will first attempt to update an existing item, and when that
         fails we will insert a new item
 
         :param id:
@@ -512,7 +512,35 @@ class DataAPIStorageHandler:
         raise exceptions.UnimplementedFeatureException()
 
     def item_master_update(self, caller_identity: str, **kwargs):
-        pass
+        if self._pk_name not in kwargs or params.ITEM_MASTER_ID not in kwargs:
+            raise exceptions.InvalidArgumentsException(
+                f"Request must include {self._pk_name} and {params.ITEM_MASTER_ID}")
+        else:
+            # check that the item master exists
+            item_master_id = str(kwargs.get(params.ITEM_MASTER_ID))
+            found = self.check(id=item_master_id)
+
+            pk = kwargs.get(self._pk_name)
+            if pk is not None and ',' in pk:
+                pk_vals = [f"'{x}'" for x in pk.split(',')]
+                pk_clause = f"{self._pk_name} in ({','.join(pk_vals)})"
+            else:
+                pk_clause = f"{self._pk_name} = '{pk}'"
+
+            update_attribute_clauses = [
+                f"{self._engine_type.get_who(params.ITEM_MASTER_ID)} = '{kwargs.get(params.ITEM_MASTER_ID)}'"]
+
+            update_attribute_clauses.extend(
+                self._engine_type.who_column_update(caller_identity=caller_identity, version_increment=True))
+
+            update_item_master = f"update {self._resource_table_name} set {','.join(update_attribute_clauses)} where {pk_clause}"
+
+            counts, rows = self._engine_type.run_commands(conn=self._db_conn, commands=[update_item_master])
+
+            return {
+                "RecordCount": counts[0],
+                params.DATA_MODIFIED: True if counts[0] > 0 else False
+            }
 
     def _remove_attributes_from_table(self, item_id: str, attribute_list: list, table_name: str, caller_identity: str):
         # generate the update statement setting each attribute to NULL

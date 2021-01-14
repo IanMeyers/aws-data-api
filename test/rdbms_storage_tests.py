@@ -354,9 +354,7 @@ class RdbmsStorageTests(unittest.TestCase):
         self.assertIsNotNone(i)
         self.assertIsNone(i.get(c))
 
-    def test_find(self):
-        # seed the resource and metadata tables with 10 records
-        items = []
+    def _create_ten_random(self):
         for x in range(10):
             proto = {
                 params.RESOURCE: copy.deepcopy(_test_resource).get(params.RESOURCE),
@@ -370,6 +368,42 @@ class RdbmsStorageTests(unittest.TestCase):
 
             self.assertTrue(create_response.get(params.RESOURCE).get(params.DATA_MODIFIED))
             self.assertTrue(create_response.get(params.METADATA).get(params.DATA_MODIFIED))
+
+    def test_item_master_update(self):
+        self._create_ten_random()
+
+        # update items 3 and 8 to have item master 2
+        update = {
+            "id": "3,8",
+            params.ITEM_MASTER_ID: "2"
+        }
+        update_response = self._storage_handler.item_master_update(caller_identity=self._caller_identity, **update)
+
+        self.assertIsNotNone(update_response)
+        self.assertEqual(update_response.get("RecordCount"), 2)
+
+        # update a single item master, 7-9
+        update = {
+            "id": "7",
+            params.ITEM_MASTER_ID: "9"
+        }
+        update_response = self._storage_handler.item_master_update(caller_identity=self._caller_identity, **update)
+        self.assertIsNotNone(update_response)
+        self.assertEqual(update_response.get("RecordCount"), 1)
+
+        # ensure invalid item master links fail
+        with self.assertRaises(exceptions.ResourceNotFoundException):
+            update = {
+                "id": "5",
+                params.ITEM_MASTER_ID: "impossible_id"
+            }
+            update_response = self._storage_handler.item_master_update(caller_identity=self._caller_identity, **update)
+
+        self._storage_handler.run_commands(commands=[f"delete from {self._storage_handler._resource_table_name}"])
+
+    def test_find(self):
+        # seed the resource and metadata tables with 10 records
+        self._create_ten_random()
 
         # issue a find for a single resource
         find_request = {
@@ -410,6 +444,8 @@ class RdbmsStorageTests(unittest.TestCase):
         found = self._storage_handler.find(**find_request)
         self.assertEqual("list", type(found).__name__)
         self.assertEqual(10, len(found))
+
+        self._storage_handler.run_commands(commands=[f"delete from {self._storage_handler._resource_table_name}"])
 
     def test_restore_statement(self):
         restore = self._storage_handler._create_restore_statement(id=self._item_id,
