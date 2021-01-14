@@ -4,13 +4,10 @@ import chalicelib.exceptions as exceptions
 import chalicelib.rdbms_engine_types as engine_types
 from chalicelib.rdbms_engine_types import RdbmsEngineType
 import os
-import pg8000
-from pg8000.exceptions import ProgrammingError
-import ssl
-import socket
 import traceback
 import json
 import fastjsonschema
+from pg8000.exceptions import ProgrammingError
 
 
 class DataAPIStorageHandler:
@@ -107,27 +104,6 @@ class DataAPIStorageHandler:
 
         cursor.close()
         return counts, rows
-
-    def _get_pg_conn(self, pwd: str):
-        pid = str(os.getpid())
-        conn = None
-
-        # connect to the database
-        conn = pg8000.connect(user=self._cluster_user, host=self._cluster_address, port=self._cluster_port,
-                              database=self._cluster_db,
-                              password=pwd,
-                              ssl_context=ssl.create_default_context() if self._ssl is True else None,
-                              timeout=None, tcp_keepalive=True, application_name=params.AWS_DATA_API_NAME)
-        self._logger.debug('Connect [%s] %s:%s:%s:%s' % (
-            pid, self._cluster_address, self._cluster_port, self._cluster_db, self._cluster_user))
-
-        # Enable keepalives manually until pg8000 supports it
-        # For future reference: https://github.com/mfenniak/pg8000/issues/149
-        # TCP keepalives still need to be configured appropriately on OS level as well
-        conn._usock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
-        conn.autocommit = True
-
-        return conn
 
     def _create_table_from_schema(self, table_ref: str, table_schema: dict) -> bool:
         column_spec = []
@@ -357,7 +333,12 @@ class DataAPIStorageHandler:
                                                  region=self._region)
 
             # connect to the database
-            self._db_conn = self._get_pg_conn(pwd=_pwd)
+            self._db_conn = self._engine_type.get_connection(cluster_user=self._cluster_user,
+                                                             cluster_address=self._cluster_address,
+                                                             cluster_port=self._cluster_port,
+                                                             database=self._cluster_db,
+                                                             pwd=_pwd, ssl=self._ssl)
+
             self._logger.info(f"Connected to {self._cluster_address}:{self._cluster_port} as {self._cluster_user}")
 
             # verify the resource table, indexes, and catalog registry exists

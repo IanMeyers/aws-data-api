@@ -3,6 +3,10 @@ DIALECT_MYSQL = "mysql"
 
 import chalicelib.parameters as params
 import chalicelib.exceptions as exceptions
+import pg8000
+import ssl
+import socket
+import os
 
 _who_type_map = {
     DIALECT_PG: {
@@ -39,11 +43,34 @@ class RdbmsEngineType:
         else:
             self._dialect = dialect
 
-    def get_who_type_map(self) -> dict:
-        return _who_type_map.get(self._dialect)
+    def get_connection(self, cluster_user: str, cluster_address: str, cluster_port: int, database: str, pwd: str,
+                       ssl: bool):
+        if self._dialect == DIALECT_PG:
+            pid = str(os.getpid())
+            conn = None
+
+            # connect to the database
+            conn = pg8000.connect(user=cluster_user, host=cluster_address, port=cluster_port,
+                                  database=database,
+                                  password=pwd,
+                                  ssl_context=ssl.create_default_context() if ssl is True else None,
+                                  timeout=None, tcp_keepalive=True, application_name=params.AWS_DATA_API_NAME)
+
+            # Enable keepalives manually until pg8000 supports it
+            # For future reference: https://github.com/mfenniak/pg8000/issues/149
+            # TCP keepalives still need to be configured appropriately on OS level as well
+            conn._usock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+            conn.autocommit = True
+
+            return conn
+        else:
+            raise exceptions.UnimplementedFeatureException()
 
     def get_who_col_map(self) -> dict:
         return _who_col_map.get(self._dialect)
+
+    def get_who_type_map(self) -> dict:
+        return _who_type_map.get(self._dialect)
 
     def get_who_column_keys(self) -> dict:
         return self.get_who_type_map().keys()
