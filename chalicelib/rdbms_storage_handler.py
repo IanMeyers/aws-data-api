@@ -1,6 +1,8 @@
 import chalicelib.utils as utils
 import chalicelib.parameters as params
 import chalicelib.exceptions as exceptions
+import chalicelib.rdbms_engine_types as engine_types
+from chalicelib.rdbms_engine_types import RdbmsEngineType
 import os
 import pg8000
 from pg8000.exceptions import ProgrammingError
@@ -9,26 +11,6 @@ import socket
 import traceback
 import json
 import fastjsonschema
-
-_who_col_map = {
-    params.ITEM_VERSION: "item_version",
-    params.LAST_UPDATE_ACTION: "last_update_action",
-    params.LAST_UPDATE_DATE: "last_update_date",
-    params.LAST_UPDATED_BY: "last_updated_by",
-    params.DELETED: "deleted",
-    params.ITEM_MASTER_ID: "item_master_id"
-}
-
-_who_type_map = {
-    params.ITEM_VERSION: 'integer',
-    params.LAST_UPDATE_ACTION: 'string',
-    params.LAST_UPDATE_DATE: 'datetime',
-    params.LAST_UPDATED_BY: 'string',
-    params.DELETED: 'boolean',
-    params.ITEM_MASTER_ID: 'string'
-}
-
-_who_invert = {v: k for k, v in _who_col_map.items()}
 
 
 class DataAPIStorageHandler:
@@ -62,6 +44,7 @@ class DataAPIStorageHandler:
     _ssl = False
     _sql_helper = None
     _extended_config = None
+    _engine_type = None
 
     def _get_sql(self, name):
         sql = self._sql_helper.get(name)
@@ -104,6 +87,7 @@ class DataAPIStorageHandler:
 
                         for s in subcommands:
                             if s is not None and s != '':
+                                self._logger.debug(s)
                                 cursor.execute(s.replace("\n", ""))
                                 _add_output()
                     else:
@@ -145,16 +129,6 @@ class DataAPIStorageHandler:
 
         return conn
 
-    def _generate_who_cols(self):
-        return [
-            f"{_who_col_map.get(params.ITEM_VERSION)} int not null default 1",
-            f"{_who_col_map.get(params.LAST_UPDATE_ACTION)} varchar(15) null",
-            f"{_who_col_map.get(params.LAST_UPDATE_DATE)} timestamp with time zone not null",
-            f"{_who_col_map.get(params.LAST_UPDATED_BY)} varchar(60) not null",
-            f"{_who_col_map.get(params.DELETED)} boolean not null default FALSE",
-            f"{_who_col_map.get(params.ITEM_MASTER_ID)} varchar null"
-        ]
-
     def _create_table_from_schema(self, table_ref: str, table_schema: dict) -> bool:
         column_spec = []
         prop = table_schema.get('properties')
@@ -163,12 +137,10 @@ class DataAPIStorageHandler:
             column_spec.append(
                 f"{p} {utils.json_to_pg(p_name=p, p_spec=prop.get(p), p_required=self._resource_schema.get('required'), pk_name=self._pk_name)}")
 
-        column_spec.extend(self._generate_who_cols())
+        column_spec.extend(self._engine_type.generate_who_cols())
 
         # synthesize the create table statement
         statement = f"create table if not exists {table_ref}({','.join(column_spec)})"
-
-        self._logger.debug(statement)
 
         self._run_commands([statement])
 
@@ -199,7 +171,9 @@ class DataAPIStorageHandler:
     def _verify_table(self, table_ref: str, table_schema: dict) -> None:
         try:
             cursor = self._db_conn.cursor()
-            cursor.execute(f"select count(9) from {table_ref}")
+            query = f"select count(9) from {table_ref}"
+            self._logger.debug(query)
+            cursor.execute(query)
             res = cursor.fetchone()
             self._logger.info(f"Bound to existing table {table_ref}")
         except ProgrammingError as pe:
@@ -242,34 +216,6 @@ class DataAPIStorageHandler:
 
         return set_val
 
-    def _who_column_update(self, caller_identity: str, version_increment: bool = True):
-        clauses = [
-            f"{_who_col_map.get(params.LAST_UPDATE_ACTION)} = '{params.ACTION_UPDATE}'",
-            f"{_who_col_map.get(params.LAST_UPDATE_DATE)} = CURRENT_TIMESTAMP",
-            f"{_who_col_map.get(params.LAST_UPDATED_BY)} = '{caller_identity}'"
-        ]
-
-        if version_increment is True:
-            clauses.append(f"{_who_col_map.get(params.ITEM_VERSION)} = {_who_col_map.get(params.ITEM_VERSION)}+1")
-
-        return clauses
-
-    def _who_column_list(self):
-        return [
-            _who_col_map.get(params.ITEM_VERSION),
-            _who_col_map.get(params.LAST_UPDATE_ACTION),
-            _who_col_map.get(params.LAST_UPDATE_DATE),
-            _who_col_map.get(params.LAST_UPDATED_BY)
-        ]
-
-    def _who_column_insert(self, caller_identity: str):
-        return [
-            f"0",
-            f"'{params.ACTION_CREATE}'",
-            f"CURRENT_TIMESTAMP",
-            f"'{caller_identity}'"
-        ]
-
     def _json_to_column_list(self, input: dict, caller_identity: str = None, version_increment: bool = True,
                              add_who: bool = True) -> list:
         ''' Generate a valid list of update clauses from an input dict. For example:
@@ -287,7 +233,7 @@ class DataAPIStorageHandler:
 
         # now add the 'who' column and item version updates
         if add_who is True:
-            output.extend(self._who_column_update(caller_identity, version_increment))
+            output.extend(self._engine_type.who_column_update(caller_identity, version_increment))
 
         return output
 
@@ -298,7 +244,7 @@ class DataAPIStorageHandler:
         statement = f"update {table_ref} set {updates} where {pk_name} = '{item_id}'"
 
         if check_delete is True:
-            statement = statement + f" and {_who_col_map.get(params.DELETED)} = FALSE"
+            statement = statement + f" and {self._engine_type.get_who(params.DELETED)} = FALSE"
 
         return statement
 
@@ -317,8 +263,8 @@ class DataAPIStorageHandler:
         for k in input.keys():
             values.append(self._extract_type(input.get(k)))
 
-        columns.extend(self._who_column_list())
-        values.extend(self._who_column_insert(caller_identity=caller_identity))
+        columns.extend(self._engine_type.who_column_list())
+        values.extend(self._engine_type.who_column_insert(caller_identity=caller_identity))
 
         return columns, values
 
@@ -339,6 +285,16 @@ class DataAPIStorageHandler:
                  pitr_enabled=None, kms_key_arn=None, logger=None, extended_config=None,
                  **kwargs):
 
+        if params.RDBMS_DIALECT not in kwargs:
+            raise exceptions.InvalidArgumentsException(
+                f"Cannot Instatiate RDBMS Storage Handler without KWarg {params.RDBMS_DIALECT}")
+        else:
+            # validate engine type
+            if kwargs.get(params.RDBMS_DIALECT) not in [engine_types.DIALECT_PG, engine_types.DIALECT_MYSQL]:
+                raise exceptions.InvalidArgumentsException(f"Invalid Engine Dialect {kwargs.get(params.RDBMS_DIALECT)}")
+            else:
+                self._engine_type = RdbmsEngineType(kwargs.get(params.RDBMS_DIALECT))
+
         # setup class logger
         if logger == None:
             self._logger = utils.setup_logging()
@@ -349,7 +305,8 @@ class DataAPIStorageHandler:
         log = self._logger
 
         # load the sql statement helper
-        with open(os.path.join(os.path.dirname(__file__), 'sql_fragments_pg.json'), 'r') as f:
+        with open(os.path.join(os.path.dirname(__file__), f'sql_fragments_{kwargs.get(params.RDBMS_DIALECT)}.json'),
+                  'r') as f:
             self._sql_helper = json.load(f)
 
         # setup foundation properties
@@ -413,7 +370,7 @@ class DataAPIStorageHandler:
             self._verify_indexes(self._metadata_table_name, metadata_indexes)
 
     def check(self, id: str) -> bool:
-        statement = f"select count(9) from {self._resource_table_name} where {self._pk_name} = '{id}' and {_who_col_map.get(params.DELETED)} = FALSE"
+        statement = f"select count(9) from {self._resource_table_name} where {self._pk_name} = '{id}' and {self._engine_type.get_who(params.DELETED)} = FALSE"
 
         counts, rows = self._run_commands([statement])
 
@@ -445,7 +402,7 @@ class DataAPIStorageHandler:
             for n in not_attributes:
                 del columns[n]
 
-        statement = f"select {','.join(columns)} from {self._resource_table_name} where {self._pk_name} = '{id}' and {_who_col_map.get(params.DELETED)} = FALSE"
+        statement = f"select {','.join(columns)} from {self._resource_table_name} where {self._pk_name} = '{id}' and {self._engine_type.get_who(params.DELETED)} = FALSE"
         counts, records = self._run_commands([statement])
 
         if records is not None and len(records) == 1:
@@ -463,22 +420,16 @@ class DataAPIStorageHandler:
         columns = base_columns
 
         # add the named who columns to be returned
-        columns.extend(list(_who_col_map.keys()))
+        columns.extend(list(self._engine_type.get_who_column_keys()))
 
         out = {}
-
-        def _resolve_who(value):
-            if value in _who_col_map:
-                return _who_col_map.get(value)
-            else:
-                return value
 
         # add the prefix to sql columns
         for c in columns:
             if prefix is not None:
-                out[c] = "{prefix}.{alias} as {alias}".format(prefix=prefix, alias=_resolve_who(c))
+                out[c] = "{prefix}.{alias} as {alias}".format(prefix=prefix, alias=self._engine_type.get_who(c))
             else:
-                out[c] = _resolve_who(c)
+                out[c] = self._engine_type.get_who(c)
 
         return out
 
@@ -505,14 +456,15 @@ class DataAPIStorageHandler:
         schema = self._metadata_schema.get("properties")
 
         # create the type map for what will be returned
-        type_map = _who_type_map
+        type_map = self._engine_type.get_who_type_map()
+
         for k, v in schema.items():
             type_map[k] = v.get("type")
 
         cols = self._generate_column_list(base_columns=list(schema.keys()), prefix='a')
 
         # implement delete check by joining to the resource table on the primary key
-        statement = f"select {','.join(cols.values())} from {self._metadata_table_name} a, {self._resource_table_name} b where a.{self._pk_name} = '{id}' and a.{self._pk_name} = b.{self._pk_name} and b.{_who_col_map.get(params.DELETED)} = FALSE"
+        statement = f"select {','.join(cols.values())} from {self._metadata_table_name} a, {self._resource_table_name} b where a.{self._pk_name} = '{id}' and a.{self._pk_name} = b.{self._pk_name} and b.{self._engine_type.get_who(params.DELETED)} = FALSE"
         counts, records = self._run_commands([statement])
 
         if records is not None and len(records) == 1 and records[0] is not None:
@@ -524,7 +476,7 @@ class DataAPIStorageHandler:
 
     def _create_restore_statement(self, id: str, caller_identity: str):
         return self._create_update_statement(table_ref=self._resource_table_name, pk_name=self._pk_name,
-                                             input={_who_col_map.get(params.DELETED): False},
+                                             input={self._engine_type.get_who(params.DELETED): False},
                                              item_id=id, caller_identity=caller_identity, version_increment=False,
                                              check_delete=False)
 
@@ -567,7 +519,7 @@ class DataAPIStorageHandler:
                 if self._delete_mode == params.DELETE_MODE_SOFT:
                     # perform a soft delete and reflect that only the resource will have been deleted in the response§
                     update = self._create_update_statement(table_ref=self._resource_table_name, pk_name=self._pk_name,
-                                                           input={_who_col_map.get(params.DELETED): True},
+                                                           input={self._engine_type.get_who(params.DELETED): True},
                                                            item_id=id, caller_identity=caller_identity)
                     counts, records = self._run_commands([update])
 
@@ -687,6 +639,7 @@ class DataAPIStorageHandler:
 
         # generate select statement
         query = f"select * from {query_table} where {','.join(column_filters)}"
+        self._logger.debug(query)
 
         # return resultset
         count, rows = self._run_commands(commands=[query])
@@ -706,7 +659,7 @@ class DataAPIStorageHandler:
 
         # add who column update statements
         update_attribute_clauses.extend(
-            self._who_column_update(caller_identity=caller_identity, version_increment=True))
+            self._engine_type.who_column_update(caller_identity=caller_identity, version_increment=True))
 
         # create the update statement
         update_statement = f"update {table_name} set {','.join(update_attribute_clauses)} where {self._pk_name} = '{item_id}'"

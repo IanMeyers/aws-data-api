@@ -105,6 +105,7 @@ QUERY_PARAM_CONSISTENT = 'Consistent'
 QUERY_PARAM_LIMIT = 'Limit'
 QUERY_PARAM_SEGMENT = 'Segment'
 QUERY_PARAM_TOTAL_SEGMENTS = 'TotalSegments'
+RDBMS_DIALECT = "RdbmsDialect"
 REFERENCES = 'References'
 REGION = 'region'
 REMOVE = 'REMOVE'

@@ -9,7 +9,8 @@ sys.path.append("../chalicelib")
 
 import chalicelib.parameters as params
 import chalicelib.exceptions as exceptions
-from chalicelib.pg_storage_handler import DataAPIStorageHandler
+from chalicelib.rdbms_storage_handler import DataAPIStorageHandler
+import chalicelib.rdbms_engine_types as engine_types
 import warnings
 import json
 import uuid
@@ -90,7 +91,8 @@ class RdbmsStorageTests(unittest.TestCase):
             params.DB_USERNAME_PSTORE_ARN: "DataApiAuroraPassword",
             params.DB_USE_SSL: False,
             params.CONTROL_TYPE_RESOURCE_SCHEMA: resource_schema,
-            params.CONTROL_TYPE_METADATA_SCHEMA: metadata_schema
+            params.CONTROL_TYPE_METADATA_SCHEMA: metadata_schema,
+            params.RDBMS_DIALECT: engine_types.DIALECT_PG
         }
 
         if override_metaname is not None:
