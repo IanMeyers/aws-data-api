@@ -391,6 +391,18 @@ class RdbmsStorageTests(unittest.TestCase):
         self.assertIsNotNone(update_response)
         self.assertEqual(update_response.get("RecordCount"), 1)
 
+        # check that I can unlink an item master
+        update = {
+            "id": "7",
+            params.ITEM_MASTER_ID: None
+        }
+        update_response = self._storage_handler.item_master_update(caller_identity=self._caller_identity, **update)
+        self.assertIsNotNone(update_response)
+        self.assertEqual(update_response.get("RecordCount"), 1)
+        item = self._storage_handler.get(id="7", suppress_meta_fetch=True)
+        self.assertIsNotNone(item)
+        self.assertIsNone(item.get(params.RESOURCE).get(params.ITEM_MASTER_ID))
+
         # ensure invalid item master links fail
         with self.assertRaises(exceptions.ResourceNotFoundException):
             update = {

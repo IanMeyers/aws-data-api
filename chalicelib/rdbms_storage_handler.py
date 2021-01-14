@@ -517,8 +517,11 @@ class DataAPIStorageHandler:
                 f"Request must include {self._pk_name} and {params.ITEM_MASTER_ID}")
         else:
             # check that the item master exists
-            item_master_id = str(kwargs.get(params.ITEM_MASTER_ID))
-            found = self.check(id=item_master_id)
+            item_master_id = kwargs.get(params.ITEM_MASTER_ID)
+            target_id = "null"
+            if item_master_id is not None:
+                self.check(id=item_master_id)
+                target_id = f"'{kwargs.get(params.ITEM_MASTER_ID)}'"
 
             pk = kwargs.get(self._pk_name)
             if pk is not None and ',' in pk:
@@ -528,7 +531,7 @@ class DataAPIStorageHandler:
                 pk_clause = f"{self._pk_name} = '{pk}'"
 
             update_attribute_clauses = [
-                f"{self._engine_type.get_who(params.ITEM_MASTER_ID)} = '{kwargs.get(params.ITEM_MASTER_ID)}'"]
+                f"{self._engine_type.get_who(params.ITEM_MASTER_ID)} = {target_id}"]
 
             update_attribute_clauses.extend(
                 self._engine_type.who_column_update(caller_identity=caller_identity, version_increment=True))
