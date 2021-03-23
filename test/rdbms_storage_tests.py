@@ -22,6 +22,8 @@ _resource_attr2 = 'abc'
 _meta_attr1 = _resource_attr1
 _meta_attr2 = 9876
 _meta_attr3 = True
+_API_ALIAS = "RdbmsTest_dev"
+_tablename = _API_ALIAS.lower()
 
 _test_resource = {
     params.RESOURCE: {
@@ -118,7 +120,7 @@ class RdbmsStorageTests(unittest.TestCase):
     def setUpClass(cls) -> None:
         warnings.filterwarnings("ignore", category=ResourceWarning, message="unclosed.*<ssl.SSLSocket.*>")
 
-        cls._storage_handler = cls.create_storage_handler(cls, with_name="MyItem_dev",
+        cls._storage_handler = cls.create_storage_handler(cls, with_name=_API_ALIAS,
                                                           resource_schema=cls._resource_schema,
                                                           metadata_schema=cls._metadata_schema,
                                                           extended_config=cls._extended_config)
@@ -464,7 +466,7 @@ class RdbmsStorageTests(unittest.TestCase):
                                                                   caller_identity=self._caller_identity)
 
         self.assertEqual(restore,
-                         f"update myitem_dev set deleted = 0,last_update_action = 'update',last_update_date = CURRENT_TIMESTAMP,last_updated_by = '{self._caller_identity}' where id = '{self._item_id}'")
+                         f"update {_tablename} set deleted = 0,last_update_action = 'update',last_update_date = CURRENT_TIMESTAMP,last_updated_by = '{self._caller_identity}' where id = '{self._item_id}'")
 
 
 if __name__ == '__main__':

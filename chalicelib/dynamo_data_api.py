@@ -877,51 +877,60 @@ class DataAPIStorageHandler:
             raise InvalidArgumentsException(f"Request must include {self._pk_name} and {params.ITEM_MASTER_ID}")
         else:
             # check that the item master exists
-            item_master_id = str(kwargs.get(params.ITEM_MASTER_ID))
-            item_master = self._fetch_item(self._resource_table, item_master_id)
+            item_master_id = kwargs.get(params.ITEM_MASTER_ID)
 
-            if item_master is None:
-                raise InvalidArgumentsException(f"Invalid Item Master Reference {item_master_id}")
+            if item_master_id is not None:
+                item_master = self._fetch_item(self._resource_table, item_master_id)
+
+                if item_master is None:
+                    raise ResourceNotFoundException(f"Invalid Item Master Reference {item_master_id}")
+
+            pk = kwargs.get(self._pk_name)
+            if pk is not None and ',' in pk:
+                values = pk.split(',')
             else:
-                pk = kwargs.get(self._pk_name)
-                if pk is not None and ',' in pk:
-                    values = pk.split(',')
-                else:
-                    values = [pk]
+                values = [pk]
 
-                # add the item master onto each resource record
-                update_response = []
-                for v in values:
-                    args = {"Key": {
-                        self._pk_name: str(v)
-                    },
-                        'ReturnConsumedCapacity': 'TOTAL',
-                        dtu.UE: f"SET {params.ITEM_MASTER_ID} = :v",
-                        dtu.EAV: {
-                            ":v": item_master_id
-                        },
-                        # require that the item already exists with a key match
-                        dtu.CE: Attr(self._pk_name).eq(str(v))
+            # add the item master onto each resource record
+            update_response = []
+            for v in values:
+                # base update request
+                args = {"Key": {
+                    self._pk_name: str(v)
+                },
+                    'ReturnConsumedCapacity': 'TOTAL',
+                    # require that the item already exists with a key match
+                    dtu.CE: Attr(self._pk_name).eq(str(v))
+                }
+
+                # set update to change the item master if it's provided, or remove it if None
+                if item_master_id is not None:
+                    args[dtu.UE] = f"SET {params.ITEM_MASTER_ID} = :m"
+                    args[dtu.EAV] = {
+                        ":m": item_master_id
                     }
+                else:
+                    args[dtu.UE] = f"remove {params.ITEM_MASTER_ID}"
 
-                    self._dynamo_utils.decorate_update_request(args, caller_identity, params.ACTION_UPDATE)
-                    response = None
-                    try:
-                        log.debug("Item Master Link Update")
-                        log.debug(args)
-                        response = self._resource_table.update_item(**args)
-                    except self._dynamo_client.exceptions.ConditionalCheckFailedException:
-                        # raised when the key to be updated was invalid - no problem - will just return false on the update
-                        pass
+                # add who updates
+                self._dynamo_utils.decorate_update_request(args, caller_identity, params.ACTION_UPDATE)
+                response = None
+                try:
+                    log.debug("Item Master Link Update")
+                    log.debug(args)
+                    response = self._resource_table.update_item(**args)
+                except self._dynamo_client.exceptions.ConditionalCheckFailedException:
+                    # raised when the key to be updated was invalid - no problem - will just return false on the update
+                    pass
 
-                    update_response.append({
-                        self._pk_name: str(v),
-                        params.DATA_MODIFIED: True if response is not None and 'ConsumedCapacity' in response and
-                                                      response.get('ConsumedCapacity').get(
-                                                          'CapacityUnits') > 0 else False
-                    })
+                update_response.append({
+                    self._pk_name: str(v),
+                    params.DATA_MODIFIED: True if response is not None and 'ConsumedCapacity' in response and
+                                                  response.get('ConsumedCapacity').get(
+                                                      'CapacityUnits') > 0 else False
+                })
 
-                return update_response
+            return update_response
 
     # private method which wraps scan and query API's based upon presence of indexes for the searched elements
     def _perform_query(self, table, last_key, index_attr, search_value, query_filters=None, **kwargs):

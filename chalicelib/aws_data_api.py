@@ -641,6 +641,7 @@ class AwsDataAPI:
             elif current_master != assert_item_master:
                 raise InvalidArgumentsException("Item Master {assert_item_master} does not match actual Item Master")
             else:
+                # TODO migrate this to use item_master_update with None target ID
                 return self._storage_handler.remove_resource_attributes(id=item_id,
                                                                         resource_attributes=[params.ITEM_MASTER_ID],
                                                                         caller_identity=self._simple_identity)
