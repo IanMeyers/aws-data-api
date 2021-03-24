@@ -9,9 +9,27 @@ import fastjsonschema
 
 
 def validate_params(**kwargs):
-    if params.RDBMS_DIALECT not in kwargs:
-        raise exceptions.InvalidArgumentsException(
-            f"Unable to generate RDBMS Storage Handler without {params.RDBMS_DIALECT}")
+    required_args = [params.CLUSTER_ADDRESS,
+                     params.CLUSTER_PORT,
+                     params.DB_USERNAME,
+                     params.DB_NAME,
+                     params.DB_USERNAME_PSTORE_ARN,
+                     params.DB_USE_SSL,
+                     params.RDBMS_DIALECT,
+                     params.CRAWLER_ROLENAME,
+                     params.PRIMARY_KEY,
+                     params.TABLE_INDEXES,
+                     params.STORAGE_HANDLER,
+                     params.CONTROL_TYPE_RESOURCE_SCHEMA
+                     ]
+
+    for r in required_args:
+        if r not in kwargs:
+            raise exceptions.InvalidArgumentsException(
+                f"Unable to generate RDBMS Storage Handler without parameter {r}")
+
+    if kwargs.get(params.RDBMS_DIALECT) not in [engine_types.DIALECT_PG, engine_types.DIALECT_MYSQL]:
+        raise exceptions.InvalidArgumentsException(f"Invalid Engine Dialect {kwargs.get(params.RDBMS_DIALECT)}")
 
 
 class DataAPIStorageHandler:
@@ -44,19 +62,19 @@ class DataAPIStorageHandler:
     _db_conn = None
     _ssl = False
     _sql_helper = None
-    _extended_config = None
     _engine_type = None
+    _resource_validator = None
+    _metadata_validator = None
 
-    def _verify_catalog(self, table_ref: str) -> None:
+    def _verify_catalog(self, table_ref: str, **kwargs) -> None:
         # setup a glue connection and crawler for this database and table
-        args = {
-            params.EXTENDED_CONFIG: self._extended_config,
+        kwargs.update({
             params.CLUSTER_ADDRESS: self._cluster_address,
             params.CLUSTER_PORT: self._cluster_port,
             params.DB_NAME: self._cluster_db,
             params.DB_USERNAME: self._cluster_user,
             params.DB_USERNAME_PSTORE_ARN: self._cluster_pstore
-        }
+        })
         # interface uses kwargs as this method supports both dynamo and rds based crawlers
         utils.verify_crawler(table_name=table_ref, crawler_rolename=self._crawler_rolename,
                              catalog_db=self._catalog_database,
@@ -65,7 +83,7 @@ class DataAPIStorageHandler:
                              region=self._region,
                              logger=self._logger,
                              crawler_prefix=f'PG-{self._cluster_address.split(".")[0]}',
-                             **args)
+                             **kwargs)
 
     def _extract_type(self, input):
         if type(input) == str:
@@ -159,15 +177,10 @@ class DataAPIStorageHandler:
         global log
         log = self._logger
 
-        if params.RDBMS_DIALECT not in kwargs:
-            raise exceptions.InvalidArgumentsException(
-                f"Cannot Instatiate RDBMS Storage Handler without KWarg {params.RDBMS_DIALECT}")
-        else:
-            # validate engine type
-            if kwargs.get(params.RDBMS_DIALECT) not in [engine_types.DIALECT_PG, engine_types.DIALECT_MYSQL]:
-                raise exceptions.InvalidArgumentsException(f"Invalid Engine Dialect {kwargs.get(params.RDBMS_DIALECT)}")
-            else:
-                self._engine_type = RdbmsEngineType(kwargs.get(params.RDBMS_DIALECT))
+        validate_params(**kwargs)
+
+        # validate engine type
+        self._engine_type = RdbmsEngineType(kwargs.get(params.RDBMS_DIALECT))
 
         # setup foundation properties
         self._region = region
@@ -179,8 +192,6 @@ class DataAPIStorageHandler:
             self._metadata_table_name = kwargs.get(params.OVERRIDE_METADATA_TABLENAME)
         else:
             self._metadata_table_name = f"{self._resource_table_name}_{params.METADATA}".lower()
-
-        self._logger.debug(f"Metadata Table {self._metadata_table_name}")
 
         self._pk_name = primary_key_attribute
         self._logger.debug(f"Primary Key {self._pk_name}")
@@ -214,27 +225,29 @@ class DataAPIStorageHandler:
         if self._cluster_pstore is None:
             raise exceptions.InvalidArgumentsException(
                 "Unable to connect to Target Cluster Database without SSM Parameter Store Password ARN")
-        else:
-            # extract the password from ssm
-            _pwd = utils.get_encrypted_parameter(parameter_name=self._cluster_pstore,
-                                                 region=self._region)
 
-            # connect to the database
-            self._db_conn = self._engine_type.get_connection(cluster_user=self._cluster_user,
-                                                             cluster_address=self._cluster_address,
-                                                             cluster_port=self._cluster_port,
-                                                             database=self._cluster_db,
-                                                             pwd=_pwd, ssl=self._ssl)
+        # extract the password from ssm
+        _pwd = utils.get_encrypted_parameter(parameter_name=self._cluster_pstore,
+                                             region=self._region)
 
-            self._logger.info(f"Connected to {self._cluster_address}:{self._cluster_port} as {self._cluster_user}")
+        # connect to the database
+        self._db_conn = self._engine_type.get_connection(cluster_user=self._cluster_user,
+                                                         cluster_address=self._cluster_address,
+                                                         cluster_port=self._cluster_port,
+                                                         database=self._cluster_db,
+                                                         pwd=_pwd, ssl=self._ssl)
 
-            # verify the resource table, indexes, and catalog registry exists
-            self._engine_type.verify_table(conn=self._db_conn, table_ref=self._resource_table_name,
-                                           table_schema=self._resource_schema, pk_name=self._pk_name)
-            self._engine_type.verify_indexes(self._db_conn, self._resource_table_name, table_indexes)
-            self._verify_catalog(self._resource_table_name)
+        self._logger.info(f"Connected to {self._cluster_address}:{self._cluster_port} as {self._cluster_user}")
 
-            # verify the metadata table, indexes, and catalog registry exists
+        # verify the resource table, indexes, and catalog registry exists
+        self._engine_type.verify_table(conn=self._db_conn, table_ref=self._resource_table_name,
+                                       table_schema=self._resource_schema, pk_name=self._pk_name)
+        self._engine_type.verify_indexes(self._db_conn, self._resource_table_name, table_indexes)
+        self._verify_catalog(self._resource_table_name, **kwargs)
+
+        # verify the metadata table, indexes, and catalog registry exists
+        if self._metadata_validator is not None:
+            self._logger.debug(f"Metadata Table {self._metadata_table_name}")
             self._engine_type.verify_table(conn=self._db_conn, table_ref=self._metadata_table_name,
                                            table_schema=self._metadata_schema, pk_name=self._pk_name)
             self._engine_type.verify_indexes(self._db_conn, self._metadata_table_name, metadata_indexes)

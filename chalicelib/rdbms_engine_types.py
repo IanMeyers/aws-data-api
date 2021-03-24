@@ -58,12 +58,12 @@ class RdbmsEngineType:
 
     def get_connection(self, cluster_user: str, cluster_address: str, cluster_port: int, database: str, pwd: str,
                        ssl: bool):
-        if self._dialect == DIALECT_PG:
-            pid = str(os.getpid())
-            conn = None
+        self._logger.debug("Creating new Database Connection")
+        self._logger.debug(locals())
 
+        if self._dialect == DIALECT_PG:
             # connect to the database
-            conn = pg8000.connect(user=cluster_user, host=cluster_address, port=cluster_port,
+            conn = pg8000.connect(user=cluster_user, host=cluster_address, port=int(cluster_port),
                                   database=database,
                                   password=pwd,
                                   ssl_context=ssl.create_default_context() if ssl is True else None,
@@ -224,7 +224,10 @@ class RdbmsEngineType:
 
     def verify_indexes(self, conn, table_ref: str, indexes: list) -> None:
         if indexes is not None:
-            for i in indexes:
+            process_indexes = []
+            process_indexes.append(indexes)
+
+            for i in process_indexes:
                 sql = self.get_sql("VerifyIndexOnColumn") % (table_ref, i)
 
                 counts, index_exists = self.run_commands(conn, [sql])

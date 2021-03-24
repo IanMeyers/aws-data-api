@@ -531,7 +531,7 @@ def provisioning_lambda(event, context):
         api_metadata[params.DATA_TYPE] = api_name
         api_metadata[params.DEPLOYED_ACCOUNT] = context.invoked_function_arn.split(":")[4]
         api_metadata[params.STORAGE_TABLE] = table_name
-        api_metadata[params.STORAGE_HANDLER] = params.DEFAULT_STORAGE_HANDLER
+        api_metadata[params.STORAGE_HANDLER] = event.get(params.STORAGE_HANDLER, params.DEFAULT_STORAGE_HANDLER)
         api_metadata[params.CATALOG_DATABASE] = params.DEFAULT_CATALOG_DATABASE
     else:
         log.debug(f"API {api_name} already exists. Performing property update and instance rebuild")
@@ -539,8 +539,8 @@ def provisioning_lambda(event, context):
         # remove last update date/by information to prevent update collision
         utils.remove_internal_attrs(api_metadata)
 
-    # overlay the supplied parameters onto the api metadata
-    api_metadata.update(event)
+    # overlay the supplied parameters onto the api metadata if they aren't already there
+    api_metadata = dict(list(event.items()) + list(api_metadata.items()))
 
     # add a pending status
     api_metadata['Status'] = params.STATUS_CREATING

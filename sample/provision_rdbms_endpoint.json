@@ -1,8 +1,9 @@
 {
   "PrimaryKey": "id",
-  "TableIndexes": "attr2",
+  "TableIndexes": ["attr2"],
   "StorageHandler": "rdbms_storage_handler",
   "RdbmsDialect": "pg",
+  "CrawlerRolename": "DataAPICrawlerRole",
   "JsonSchema-Resource": {
     "$id": "https://example.com/myitem-resource.schema.json",
     "$schema": "http://json-schema.org/draft-07/schema#",
@@ -40,12 +41,12 @@
     "title": "MyItem-Resource",
     "type": "object"
   },
-  "subnet_ids": [
+  "Subnets": [
     "subnet-dbcc31be",
     "subnet-0dfe3d65",
     "subnet-32af6f45"
   ],
-  "security_group_ids": [
+  "SecurityGroups": [
     "sg-26ec6a5e"
   ],
   "ClusterAddress": "data-api.crpngd5qgxik.eu-west-1.rds.amazonaws.com",

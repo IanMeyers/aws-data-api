@@ -90,6 +90,7 @@
         "glue:StopCrawlerSchedule",
         "glue:UpdateCrawler",
         "glue:CreateCrawler",
+        "glue:CreateConnection",
         "s3:GetObject",
         "s3:GetObjectTagging",
         "iam:PassRole",

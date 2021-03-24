@@ -386,12 +386,9 @@ def verify_crawler(table_name, crawler_rolename, catalog_db, datasource_type: st
                     'UpdateBehavior': 'UPDATE_IN_DATABASE',
                 }
             )
-        elif datasource_type == params.RDS_PG_STORAGE_HANDLER:
+        elif datasource_type == params.RDBMS_STORAGE_HANDLER:
             database_name = kwargs.get(params.CLUSTER_ADDRESS).split('.')[0]
-            extended_config = kwargs.get(params.EXTENDED_CONFIG)
 
-            if extended_config is None:
-                raise exceptions.InvalidArgumentsException("Cannot create RDS Crawler without Extended Configuration")
             if deployed_account is None:
                 raise exceptions.InvalidArgumentsException(
                     "Cannot create RDS Crawler without Deployment Account Information")
@@ -410,12 +407,14 @@ def verify_crawler(table_name, crawler_rolename, catalog_db, datasource_type: st
                         'JDBC_CONNECTION_URL': f'jdbc:postgresql://{kwargs.get(params.CLUSTER_ADDRESS)}:{kwargs.get(params.CLUSTER_PORT)}/{kwargs.get(params.DB_NAME)}',
                         'USERNAME': kwargs.get(params.DB_USERNAME),
                         'PASSWORD': _pwd
-                    },
-                    'PhysicalConnectionRequirements': {
-                        'SubnetId': extended_config.get('subnet_ids')[0],
-                        'SecurityGroupIdList': extended_config.get('security_group_ids')
                     }
                 }
+
+                if params.SUBNETS in kwargs and params.SECURITY_GROUPS in kwargs:
+                    conn_args['PhysicalConnectionRequirements'] = {
+                        'SubnetId': kwargs.get(params.SUBNETS)[0],
+                        'SecurityGroupIdList': kwargs.get(params.SECURITY_GROUPS)
+                    }
 
                 glue_client.create_connection(
                     CatalogId=deployed_account,
@@ -664,3 +663,10 @@ def get_glue_job_status(job_name, run_id):
             return _extract_glue_job_status(response['JobRun'])
     except glue_client.exceptions.EntityNotFoundException:
         raise ResourceNotFoundException("Unable to resolve Job Name or Run ID")
+
+
+def safe_add_map_values(source_map: dict, target_map: dict) -> None:
+    ''' Add values from source map to target map without overwriting values that are already in the target '''
+    for k in source_map.keys():
+        if k not in target_map:
+            target_map[k] = source_map[k]
