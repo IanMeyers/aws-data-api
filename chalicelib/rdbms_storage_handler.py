@@ -8,6 +8,12 @@ import json
 import fastjsonschema
 
 
+def validate_params(**kwargs):
+    if params.RDBMS_DIALECT not in kwargs:
+        raise exceptions.InvalidArgumentsException(
+            f"Unable to generate RDBMS Storage Handler without {params.RDBMS_DIALECT}")
+
+
 class DataAPIStorageHandler:
     _region = None
     _glue_client = None
@@ -54,7 +60,7 @@ class DataAPIStorageHandler:
         # interface uses kwargs as this method supports both dynamo and rds based crawlers
         utils.verify_crawler(table_name=table_ref, crawler_rolename=self._crawler_rolename,
                              catalog_db=self._catalog_database,
-                             datasource_type=params.RDS_PG_STORAGE_HANDLER,
+                             datasource_type=params.RDBMS_STORAGE_HANDLER,
                              deployed_account=self._deployed_account,
                              region=self._region,
                              logger=self._logger,
@@ -140,8 +146,18 @@ class DataAPIStorageHandler:
     def __init__(self, table_name, primary_key_attribute, region, delete_mode, allow_runtime_delete_mode_change,
                  table_indexes, metadata_indexes, schema_validation_refresh_hitcount, crawler_rolename,
                  catalog_database, allow_non_itemmaster_writes, strict_occv, deployed_account,
-                 pitr_enabled=None, kms_key_arn=None, logger=None, extended_config=None,
-                 **kwargs):
+                 pitr_enabled=None, kms_key_arn=None, logger=None, **kwargs):
+        # setup class logger
+        if logger is None:
+            self._logger = utils.setup_logging()
+        else:
+            self._logger = logger
+
+        self._logger.debug("Creating new RDBMS Storage Handler with Properties:")
+        self._logger.debug(kwargs)
+
+        global log
+        log = self._logger
 
         if params.RDBMS_DIALECT not in kwargs:
             raise exceptions.InvalidArgumentsException(
@@ -153,18 +169,10 @@ class DataAPIStorageHandler:
             else:
                 self._engine_type = RdbmsEngineType(kwargs.get(params.RDBMS_DIALECT))
 
-        # setup class logger
-        if logger == None:
-            self._logger = utils.setup_logging()
-        else:
-            self._logger = logger
-
-        global log
-        log = self._logger
-
         # setup foundation properties
         self._region = region
         self._resource_table_name = table_name.lower()
+        self._logger.debug(f"Resource Table {self._resource_table_name}")
 
         # allow override of the metadata table name
         if params.OVERRIDE_METADATA_TABLENAME in kwargs:
@@ -172,9 +180,11 @@ class DataAPIStorageHandler:
         else:
             self._metadata_table_name = f"{self._resource_table_name}_{params.METADATA}".lower()
 
+        self._logger.debug(f"Metadata Table {self._metadata_table_name}")
+
         self._pk_name = primary_key_attribute
+        self._logger.debug(f"Primary Key {self._pk_name}")
         self._deployed_account = deployed_account
-        self._extended_config = extended_config
         self._crawler_rolename = crawler_rolename
         self._catalog_database = catalog_database
         self._delete_mode = delete_mode
@@ -194,12 +204,12 @@ class DataAPIStorageHandler:
         # create schema validators
         if self._resource_schema is not None:
             self._resource_validator = fastjsonschema.compile(self._resource_schema)
-        if self._metadata_schema is not None:
-            self._metadata_validator = fastjsonschema.compile(self._metadata_schema)
-
-        if self._resource_schema is None:
+        else:
             raise exceptions.InvalidArgumentsException(
                 "Relational Storage Handler requires a JSON Schema to initialise")
+
+        if self._metadata_schema is not None:
+            self._metadata_validator = fastjsonschema.compile(self._metadata_schema)
 
         if self._cluster_pstore is None:
             raise exceptions.InvalidArgumentsException(

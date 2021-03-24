@@ -75,7 +75,7 @@ class RdbmsStorageTests(unittest.TestCase):
         _metadata_schema = json.load(f)
 
     # create a simple extended configuration that binds to the subnets where the database is deployed
-    _extended_config = {
+    _networking_config = {
         "subnet_ids": ["subnet-dbcc31be",
                        "subnet-0dfe3d65",
                        "subnet-32af6f45"],
@@ -83,7 +83,6 @@ class RdbmsStorageTests(unittest.TestCase):
     }
 
     def create_storage_handler(self, with_name: str, resource_schema: dict, metadata_schema: dict,
-                               extended_config: dict,
                                override_metaname: str = None) -> DataAPIStorageHandler:
         other_args = {
             params.CLUSTER_ADDRESS: self._cluster_address,
@@ -96,6 +95,8 @@ class RdbmsStorageTests(unittest.TestCase):
             params.CONTROL_TYPE_METADATA_SCHEMA: metadata_schema,
             params.RDBMS_DIALECT: engine_types.DIALECT_PG
         }
+
+        other_args.update(self._networking_config)
 
         if override_metaname is not None:
             other_args[params.OVERRIDE_METADATA_TABLENAME] = override_metaname
@@ -112,7 +113,6 @@ class RdbmsStorageTests(unittest.TestCase):
                                         gremlin_address=None, deployed_account=account,
                                         pitr_enabled=None, kms_key_arn=None,
                                         schema_validation_refresh_hitcount=None,
-                                        extended_config=extended_config,
                                         **other_args)
         return handler
 
@@ -122,8 +122,7 @@ class RdbmsStorageTests(unittest.TestCase):
 
         cls._storage_handler = cls.create_storage_handler(cls, with_name=_API_ALIAS,
                                                           resource_schema=cls._resource_schema,
-                                                          metadata_schema=cls._metadata_schema,
-                                                          extended_config=cls._extended_config)
+                                                          metadata_schema=cls._metadata_schema)
 
     @classmethod
     def tearDownClass(cls) -> None:
@@ -228,7 +227,6 @@ class RdbmsStorageTests(unittest.TestCase):
         handler = self.create_storage_handler(with_name=resource_ovrr,
                                               resource_schema=self._resource_schema,
                                               metadata_schema=self._metadata_schema,
-                                              extended_config=self._extended_config,
                                               override_metaname=metadata_ovrr)
 
         self.assertEqual(resource_ovrr, handler._resource_table_name)

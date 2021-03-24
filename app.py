@@ -4,7 +4,6 @@ from chalice import Chalice, CORSConfig, Response, IAMAuthorizer, CognitoUserPoo
     BadRequestError, ConflictError, NotFoundError
 import http
 import os
-import boto3
 from functools import wraps
 import chalicelib.utils as utils
 from chalicelib.api_metadata import ApiMetadata
@@ -99,8 +98,10 @@ except FileNotFoundError:
     pass
 
 # open the config.json so it can be used as an extended configuration source
-with open('.chalice/config.json', 'r') as f:
-    _extended_config = json.load(f).get("stages").get(STAGE)
+_extended_config = {}
+if os.path.exists('.chalice'):
+    with open('.chalice/config.json', 'r') as f:
+        _extended_config = json.load(f).get("stages").get(STAGE)
 
 # create a cache of all API references tracked by this deployment stage
 api_cache = DataApiCache(app=app, stage=STAGE, region=REGION, logger=log, extended_config=_extended_config)
@@ -169,7 +170,7 @@ def chalice_function(f):
                             status_code=http.HTTPStatus.INTERNAL_SERVER_ERROR)
         except Exception as e:
             log.error(str(e))
-            raise e
+            raise BadRequestError(e)
 
     return wrapper
 
@@ -512,14 +513,14 @@ def indexing_lambda(event, context):
 def provisioning_lambda(event, context):
     # TODO Add support for creation of Read/Only and Read/Write IAM Roles during provisioning
     log.debug(event)
-    api_name = event.get("ApiName")
-    event.pop("ApiName")
+    api_name = event.get(params.API_NAME_PARAM)
 
     # create an API Metadata Handler
     api_metadata_handler = ApiMetadata(REGION, log)
 
     # check if this API is already deployed
-    table_name = utils.get_table_name(table_name=api_name, deployment_stage=STAGE)
+    table_name = utils.get_table_name(table_name=api_name, deployment_stage=STAGE,
+                                      storage_engine=event.get(params.STORAGE_HANDLER))
     api_metadata = api_metadata_handler.get_api_metadata(api_name, STAGE)
 
     if api_metadata is None:
@@ -544,8 +545,24 @@ def provisioning_lambda(event, context):
     # add a pending status
     api_metadata['Status'] = params.STATUS_CREATING
 
+    _caller_identity = 'System'
+
+    # create resource & metadata schemas if provided
+    if params.CONTROL_TYPE_RESOURCE_SCHEMA in api_metadata:
+        api_metadata_handler.put_schema(api_name=api_name, stage=STAGE, schema_type=params.RESOURCE,
+                                        caller_identity=_caller_identity,
+                                        schema=api_metadata.get(params.CONTROL_TYPE_RESOURCE_SCHEMA))
+        del api_metadata[params.CONTROL_TYPE_RESOURCE_SCHEMA]
+
+    if params.CONTROL_TYPE_METADATA_SCHEMA in api_metadata:
+        api_metadata_handler.put_schema(api_name=api_name, stage=STAGE, schema_type=params.METADATA,
+                                        caller_identity=_caller_identity,
+                                        schema=api_metadata.get(params.CONTROL_TYPE_METADATA_SCHEMA))
+        del api_metadata[params.CONTROL_TYPE_METADATA_SCHEMA]
+
     # add a control table entry for this stage with the current configuration
-    api_metadata_handler.create_metadata(api_name=api_name, stage=STAGE, caller_identity='System', **api_metadata)
+    api_metadata_handler.create_metadata(api_name=api_name, stage=STAGE, caller_identity=_caller_identity,
+                                         **api_metadata)
 
     api_metadata[params.APP] = app
 
@@ -602,8 +619,8 @@ def understander_lambda(event, context):
     if understander is None:
         understander = u.Understander(region=REGION)
 
-    api_name = arg_handler("ApiName")
-    api_stage = arg_handler("ApiStage")
+    api_name = arg_handler(params.API_NAME_PARAM)
+    api_stage = arg_handler(params.API_STAGE_PARAM)
 
     # run the understander method
     understanding = understander.understand(prefix=prefix)

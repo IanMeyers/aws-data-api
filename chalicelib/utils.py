@@ -119,8 +119,11 @@ def identity_trace(f):
 
 
 def strtobool(val):
-    # wrapping distutils as I actually want a boolean
-    return _util.strtobool(val) == 1
+    if val is True or val is False:
+        return val
+    else:
+        # wrapping distutils as I actually want a boolean
+        return _util.strtobool(val) == 1
 
 
 # method to generate the ID for a metadata entry
@@ -241,8 +244,14 @@ def get_date_now(fmt=None):
         return get_datetime_now().strftime(fmt)
 
 
-def get_table_name(table_name, deployment_stage):
-    return f"{table_name}-{deployment_stage}"
+def get_table_name(table_name, deployment_stage, storage_engine: str = params.DYNAMO_STORAGE_HANDLER) -> str:
+    if storage_engine == params.DYNAMO_STORAGE_HANDLER or storage_engine is None:
+        return f"{table_name}-{deployment_stage}"
+    elif storage_engine == params.RDBMS_STORAGE_HANDLER:
+        return f"{table_name}_{deployment_stage}"
+    else:
+        raise exceptions.InvalidArgumentsException(
+            f"Unable to generate table name for storage handler {storage_engine}")
 
 
 def _get_client(name: str):

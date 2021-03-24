@@ -2,9 +2,10 @@ gremlinpython==3.4.8
 SPARQLWrapper==1.8.5
 fastjsonschema==2.14.5
 pystache==0.5.4
-boto3==1.16.20
+boto3==1.17.34
 formencode==1.3.1
 elasticsearch==7.9.1
-chalice==1.21.4
+chalice==1.22.2
+pg8000==1.18.0
 # remove this dependency for production stages
 aws-xray-sdk==2.6.0

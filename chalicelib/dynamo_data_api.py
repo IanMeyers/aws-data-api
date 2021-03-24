@@ -17,6 +17,8 @@ from chalicelib.schema_cache_entry import SchemaCacheEntry
 
 log = None
 
+def validate_params(**kwargs):
+    pass
 
 def table_scan(table, apply_filters=None):
     filters = []
@@ -65,7 +67,7 @@ class DataAPIStorageHandler:
     def __init__(self, table_name, primary_key_attribute, region, delete_mode, allow_runtime_delete_mode_change,
                  table_indexes, metadata_indexes, schema_validation_refresh_hitcount, crawler_rolename,
                  catalog_database, allow_non_itemmaster_writes, strict_occv, deployed_account,
-                 pitr_enabled=None, kms_key_arn=None, logger=None, extended_config=None):
+                 pitr_enabled=None, kms_key_arn=None, logger=None, extended_config=None, **kwargs):
         # setup class logger
         if logger is None:
             self._logger = utils.setup_logging()

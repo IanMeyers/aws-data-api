@@ -10,7 +10,7 @@ import json
 import socket
 import os
 import traceback
-from pg8000.exceptions import ProgrammingError
+from pg8000.dbapi import ProgrammingError
 
 _who_type_map = {
     DIALECT_PG: {
@@ -180,7 +180,7 @@ class RdbmsEngineType:
                     else:
                         cursor.execute(c)
                         _add_output()
-                except pg8000.exceptions.IntegrityError as ie:
+                except pg8000.dbapi.IntegrityError as ie:
                     pass
                 except Exception as e:
                     # cowardly bail on errors
@@ -199,7 +199,7 @@ class RdbmsEngineType:
         if self._dialect == DIALECT_PG:
             try:
                 cursor = conn.cursor()
-                query = f"select count(9) from {table_ref}"
+                query = f'select count(9) from "{table_ref}"'
                 self._logger.debug(query)
                 cursor.execute(query)
                 res = cursor.fetchone()
@@ -209,7 +209,8 @@ class RdbmsEngineType:
                     # table doesn't exist so create it based on the current schema
                     self.create_table_from_schema(conn, table_ref, table_schema, pk_name)
                 else:
-                    raise exceptions.DetailedException(pe.message)
+                    self._logger.error(pe)
+                    raise exceptions.DetailedException(pe)
         else:
             raise exceptions.UnimplementedFeatureException()
 

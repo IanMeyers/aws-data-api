@@ -61,7 +61,7 @@ class DataApiCache:
                 else:
                     api_metadata['app'] = self._app
                     api_metadata[params.REGION] = self._region
-                    api_metadata['ApiName'] = api_name
+                    api_metadata[params.API_NAME_PARAM] = api_name
                     api_metadata[params.EXTENDED_CONFIG] = self._extended_config
 
                     # instantiate the API from metadata

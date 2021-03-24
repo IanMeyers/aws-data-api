@@ -56,7 +56,7 @@ class CloudwatchEmitter():
         self._api_name = api_name
         self._api_stage = api_stage
         self._event_dimensions = [{"Name": "ApiNamespace", "Value": self._api_name},
-                                  {"Name": "ApiStage", "Value": self._api_stage}]
+                                  {"Name": params.API_STAGE_PARAM, "Value": self._api_stage}]
         # create the cloudwatch client and set log function
         if self._cwe_client is None:
             self._cwe_client = boto3.client('cloudwatch', region_name=os.getenv('AWS_REGION'))

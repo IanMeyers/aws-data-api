@@ -99,7 +99,8 @@
         "comprehend:DetectDominantLanguage",
         "comprehend:DetectSentiment",
         "comprehend:DetectKeyPhrases",
-        "cloudwatch:PutMetricData"
+        "cloudwatch:PutMetricData",
+        "ssm:GetParameter"
       ],
       "Resource": "*"
     }

@@ -22,6 +22,11 @@ if utils.strtobool(os.getenv(params.XRAY_ENABLED, 'false')) is True:
 log = None
 
 
+def load_storage_handler_module(handler_name):
+    sys.path.append("chalicelib")
+    return __import__(handler_name)
+
+
 # non-class method to get the status of an API, as the Class version represents a fully online API, while non-class
 # methods can be used for API's in process
 def get_api_status(api_name: str, stage: str, region: str, logger: logging.Logger = None) -> dict:
@@ -89,11 +94,15 @@ def async_provision(api_name: str, stage: str, region: str, logger: logging.Logg
 
     :return: None
     """
+    # inject the API name for validation by downstream components
+    kwargs[params.API_NAME_PARAM] = api_name
 
-    kwargs['ApiName'] = api_name
+    # let the storage class validate provided arguments
+    storage_module = load_storage_handler_module(params.RDBMS_STORAGE_HANDLER)
+    storage_module.validate_params(**kwargs)
 
+    # provisioning is accomplished by invoking a lambda async with the needed arguments
     lambda_client = boto3.client("lambda", region_name=region)
-
     f = f"{params.AWS_DATA_API_NAME}-{stage}-{params.PROVISIONER_NAME}"
 
     logger.debug(f"Requesting async provision of API {api_name}")
@@ -169,7 +178,7 @@ class AwsDataAPI:
         self._region = kwargs.get(params.REGION, os.getenv('AWS_REGION'))
 
         self._full_config = kwargs
-        self._api_name = kwargs.get('ApiName')
+        self._api_name = kwargs.get(params.API_NAME_PARAM)
         self._table_name = kwargs.get(params.STORAGE_TABLE)
 
         # setup instance logger
@@ -177,11 +186,11 @@ class AwsDataAPI:
         global log
         log = self._logger
 
+        self._logger.debug("Constructing new Data API with Args")
+        self._logger.debug(kwargs)
+
         # create the API metadata handler
         self._api_metadata_handler = ApiMetadata(self._region, self._logger, kwargs.get(params.KMS_KEY_ARN))
-
-        log.debug("Instantiating new Data API Namespace")
-        log.debug(kwargs)
 
         # Load class properties from any supplied metadata. These will be populated when hydrating an existing API
         # namespace from DynamoDB
@@ -201,27 +210,38 @@ class AwsDataAPI:
                                                        params.DEFAULT_NON_ITEM_MASTER_WRITE_ALLOWED)
         self._strict_occv = kwargs.get(params.STRICT_OCCV, params.DEFAULT_STRICT_OCCV)
         self._catalog_database = kwargs.get(params.CATALOG_DATABASE, params.DEFAULT_CATALOG_DATABASE)
-        self._extended_config = kwargs.get(params.EXTENDED_CONFIG)
 
         # setup the storage handler which implements the backend data api functionality
-        self._storage_handler = self._get_storage_handler(table_name=self._table_name,
-                                                          primary_key_attribute=self._pk_name,
-                                                          region=self._region,
-                                                          delete_mode=self._delete_mode,
-                                                          allow_runtime_delete_mode_change=self._allow_runtime_delete_mode_change,
-                                                          table_indexes=self._table_indexes,
-                                                          metadata_indexes=self._metadata_indexes,
-                                                          schema_validation_refresh_hitcount=self._schema_validation_refresh_hitcount,
-                                                          crawler_rolename=self._crawler_rolename,
-                                                          catalog_database=self._catalog_database,
-                                                          allow_non_itemmaster_writes=self._allow_non_itemmaster_writes,
-                                                          strict_occv=self._strict_occv,
-                                                          deployed_account=kwargs.get(params.DEPLOYED_ACCOUNT, None),
-                                                          handler_name=kwargs[params.STORAGE_HANDLER],
-                                                          pitr_enabled=bool(kwargs.get(params.PITR_ENABLED,
-                                                                                       params.DEFAULT_PITR_ENABLED)),
-                                                          kms_key_arn=kwargs.get(params.STORAGE_CRYPTO_KEY_ARN, None),
-                                                          extended_config=self._extended_config)
+        storage_args = kwargs
+
+        resource_schema = self._api_metadata_handler.get_schema(api_name=self._api_name, stage=self._deployment_stage,
+                                                                schema_type=params.RESOURCE)
+        if resource_schema is not None:
+            storage_args[params.CONTROL_TYPE_RESOURCE_SCHEMA] = resource_schema
+
+        metadata_schema = self._api_metadata_handler.get_schema(api_name=self._api_name, stage=self._deployment_stage,
+                                                                schema_type=params.METADATA)
+        if metadata_schema is not None:
+            storage_args[params.CONTROL_TYPE_METADATA_SCHEMA] = metadata_schema
+
+        storage_args["table_name"] = self._table_name
+        storage_args["primary_key_attribute"] = self._pk_name
+        storage_args["region"] = self._region
+        storage_args["delete_mode"] = self._delete_mode
+        storage_args["allow_runtime_delete_mode_change"] = self._allow_runtime_delete_mode_change
+        storage_args["table_indexes"] = self._table_indexes
+        storage_args["metadata_indexes"] = self._metadata_indexes
+        storage_args["schema_validation_refresh_hitcount"] = self._schema_validation_refresh_hitcount
+        storage_args["crawler_rolename"] = self._crawler_rolename
+        storage_args["catalog_database"] = self._catalog_database
+        storage_args["allow_non_itemmaster_writes"] = self._allow_non_itemmaster_writes
+        storage_args["strict_occv"] = self._strict_occv
+        storage_args["deployed_account"] = kwargs.get(params.DEPLOYED_ACCOUNT, None)
+        storage_args["handler_name"] = kwargs[params.STORAGE_HANDLER]
+        storage_args["pitr_enabled"] = utils.strtobool(kwargs.get(params.PITR_ENABLED, params.DEFAULT_PITR_ENABLED))
+        storage_args["kms_key_arn"] = kwargs.get(params.STORAGE_CRYPTO_KEY_ARN, None)
+
+        self._storage_handler = self._get_storage_handler(**storage_args)
 
         # setup the gremlin integration if one has been provided
         if self._gremlin_address is not None:
@@ -269,52 +289,14 @@ class AwsDataAPI:
         else:
             raise UnimplementedFeatureException(NO_GREMLIN)
 
-    def _get_storage_handler(self, table_name, primary_key_attribute, region, delete_mode,
-                             allow_runtime_delete_mode_change, table_indexes,
-                             metadata_indexes, schema_validation_refresh_hitcount, crawler_rolename, catalog_database,
-                             allow_non_itemmaster_writes, strict_occv, deployed_account, handler_name,
-                             pitr_enabled=None, kms_key_arn=None, extended_config=None):
+    def _get_storage_handler(self, **kwargs):
         """
-        Method to load a Storage Handler class based upon the configured handler name.
-
-        :param table_name:
-        :param primary_key_attribute:
-        :param region:
-        :param delete_mode:
-        :param allow_runtime_delete_mode_change:
-        :param table_indexes:
-        :param metadata_indexes:
-        :param schema_validation_refresh_hitcount:
-        :param crawler_rolename:
-        :param catalog_database:
-        :param allow_non_itemmaster_writes:
-        :param strict_occv:
-        :param deployed_account:
-        :param handler_name:
-        :param pitr_enabled:
-        :param kms_key_arn:
-        :return:
+        Method to load a Storage Handler class based upon the provided handler name.
         """
-        log.info(f"Creating new Data API Storage Handler from {handler_name}")
-        sys.path.append("chalicelib")
-        storage_module = __import__(handler_name)
+        log.info(f"Creating new Data API Storage Handler from {kwargs.get(params.STORAGE_HANDLER)}")
+        storage_module = load_storage_handler_module(kwargs.get(params.STORAGE_HANDLER))
         storage_class = getattr(storage_module, "DataAPIStorageHandler")
-
-        return storage_class(table_name, primary_key_attribute,
-                             region,
-                             delete_mode,
-                             allow_runtime_delete_mode_change,
-                             table_indexes,
-                             metadata_indexes,
-                             schema_validation_refresh_hitcount,
-                             crawler_rolename,
-                             catalog_database,
-                             allow_non_itemmaster_writes,
-                             strict_occv,
-                             deployed_account,
-                             pitr_enabled,
-                             kms_key_arn,
-                             extended_config)
+        return storage_class(**kwargs)
 
     # simple accessor method for the pk_name attribute, which is required in some cases for API integration
     def get_primary_key(self):
@@ -395,8 +377,8 @@ class AwsDataAPI:
             "id": fetch_id,
             "caller": self._simple_identity,
             "primary_key_attribute": self._pk_name,
-            "ApiName": self._api_name,
-            "ApiStage": self._deployment_stage
+            params.API_NAME_PARAM: self._api_name,
+            params.API_STAGE_PARAM: self._deployment_stage
         }
         response = self._lambda_client.invoke(FunctionName=f, InvocationType='Event', Payload=json.dumps(args))
 

@@ -71,6 +71,9 @@ class ApiMetadata:
 
     # public method to return a data API's json schema
     def get_schema(self, api_name, stage, schema_type):
+        if api_name is None or stage is None:
+            raise InvalidArgumentsException("Cannot Load API Schema without API and Stage")
+
         table_name = utils.get_table_name(api_name, stage)
 
         if schema_type.lower() == params.RESOURCE.lower():
@@ -90,6 +93,8 @@ class ApiMetadata:
 
     # public method to create a JSON schema for this data API
     def put_schema(self, api_name, stage, schema_type, caller_identity, schema):
+        self._logger.debug(schema)
+
         table_name = utils.get_table_name(api_name, stage)
 
         if schema_type.lower() == params.RESOURCE.lower():
@@ -105,6 +110,10 @@ class ApiMetadata:
 
     def create_metadata(self, api_name, stage, caller_identity="System", **kwargs):
         table_name = utils.get_table_name(api_name, stage)
+
+        # remove the ApiName kwarg if it's there
+        if params.API_NAME_PARAM in kwargs:
+            del kwargs[params.API_NAME_PARAM]
 
         return self._dynamo_helper.control_table_update(control_hash=table_name, control_sort=params.CONTROL_TYPE_META,
                                                         caller_identity=caller_identity, **kwargs)
